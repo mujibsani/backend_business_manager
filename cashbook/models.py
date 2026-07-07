@@ -21,10 +21,14 @@ class CashbookEntry(TimeStampedModel):
 
     amount = models.DecimalField(max_digits=14, decimal_places=2)
 
-    reference = models.CharField(max_length=100, blank=True)
+    reference = models.CharField(
+        max_length=100, 
+        blank=True,
+        db_index=True
+    )
     description = models.CharField(max_length=255, blank=True)
 
-    date = models.DateField()
+    date = models.DateField(db_index=True)
 
     def __str__(self):
         return f"{self.entry_type} - {self.amount}"

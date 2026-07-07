@@ -27,16 +27,25 @@ class CustomerAdmin(admin.ModelAdmin):
         "district",
         "thana",
         "area",
+        "opening_balance",
+        "opening_balance_type",
+        "is_active",
     )
 
     list_filter = (
         "division",
         "district",
         "thana",
+        "opening_balance_type",
+        "is_active",
     )
 
     search_fields = (
         "name",
         "phone",
         "area",
+    )
+
+    ordering = (
+        "name",
     )
