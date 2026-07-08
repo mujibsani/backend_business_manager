@@ -1,4 +1,6 @@
 from django.db import models
+from django.db.models import Sum
+
 from core.models import TimeStampedModel
 from suppliers.models import Supplier
 
@@ -45,7 +47,10 @@ class Purchase(TimeStampedModel):
 
     def update_totals(self):
 
-        total = sum(item.subtotal for item in self.items.all())
+        total = (
+            self.items.aggregate(total=Sum("subtotal"))["total"]
+            or 0
+        )
 
         self.total_amount = total
         self.due_amount = total - self.paid_amount
@@ -58,7 +63,11 @@ class Purchase(TimeStampedModel):
         else:
             self.status = "UNPAID"
 
-        self.save()
+        self.save(update_fields=[
+            "total_amount",
+            "due_amount",
+            "status",
+        ])
 
 
 class PurchaseItem(TimeStampedModel):

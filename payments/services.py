@@ -5,11 +5,16 @@ from django.db.models import Sum
 
 from .models import Payment
 
-from sales.models import Sale
-from purchases.models import Purchase
 
-from ledger.models import LedgerEntry
-from cashbook.models import CashbookEntry
+from ledger.services import (
+    create_customer_payment_entry,
+    create_supplier_payment_entry,
+)
+
+from cashbook.services import (
+    cash_in,
+    cash_out,
+)
 
 
 # ======================================================
@@ -46,56 +51,6 @@ def _validate_amount(amount):
         raise ValueError("Amount must be greater than zero.")
 
     return amount
-
-
-# ======================================================
-# LEDGER HELPERS
-# ======================================================
-
-def _customer_ledger(payment, description):
-    LedgerEntry.objects.create(
-        party_type="CUSTOMER",
-        customer=payment.customer,
-        reference_type="PAYMENT",
-        reference_no=payment.payment_no,
-        debit=Decimal("0.00"),
-        credit=payment.amount,
-        description=description,
-        date=payment.payment_date,
-    )
-
-
-def _supplier_ledger(payment, description):
-    LedgerEntry.objects.create(
-        party_type="SUPPLIER",
-        supplier=payment.supplier,
-        reference_type="PAYMENT",
-        reference_no=payment.payment_no,
-        debit=payment.amount,
-        credit=Decimal("0.00"),
-        description=description,
-        date=payment.payment_date,
-    )
-
-
-# ======================================================
-# CASHBOOK HELPER
-# ======================================================
-
-def _cashbook_entry(entry_type, source_type, payment, description):
-    """
-    entry_type: IN / OUT
-    source_type: SALE / PURCHASE / OTHER
-    """
-
-    CashbookEntry.objects.create(
-        entry_type=entry_type,
-        source_type=source_type,
-        amount=payment.amount,
-        reference=payment.payment_no,
-        description=description,
-        date=payment.payment_date,
-    )
 
 
 # ======================================================
@@ -193,17 +148,20 @@ def receive_customer_payment(
     _update_sale_payment(sale)
 
     # ledger
-    _customer_ledger(
-        payment,
-        description=f"Invoice Payment {sale.invoice_no}"
+    create_customer_payment_entry(
+        customer=customer,
+        amount=amount,
+        reference_no=payment.payment_no,
+        date=payment.payment_date,
     )
 
     # cashbook
-    _cashbook_entry(
-        entry_type="IN",
+    cash_in(
+        amount=amount,
         source_type="SALE",
-        payment=payment,
-        description="Customer Invoice Payment"
+        date=payment.payment_date,
+        reference=payment.payment_no,
+        description="Customer Invoice Payment",
     )
 
     return payment
@@ -250,21 +208,23 @@ def receive_customer_advance(
     )
 
     # ledger (advance = credit customer)
-    _customer_ledger(
-        payment,
-        description="Customer Advance Payment"
+    create_customer_payment_entry(
+        customer=customer,
+        amount=amount,
+        reference_no=payment.payment_no,
+        date=payment.payment_date,
     )
 
     # cashbook
-    _cashbook_entry(
-        entry_type="IN",
+    cash_in(
+        amount=amount,
         source_type="OTHER",
-        payment=payment,
-        description="Customer Advance Payment"
+        date=payment.payment_date,
+        reference=payment.payment_no,
+        description="Customer Advance Payment",
     )
 
     return payment
-
 
 # ======================================================
 # SUPPLIER PAYMENT AGAINST PURCHASE
@@ -315,17 +275,20 @@ def pay_supplier(
     _update_purchase_payment(purchase)
 
     # ledger (supplier = debit)
-    _supplier_ledger(
-        payment,
-        description=f"Purchase Payment {purchase.invoice_no}"
+    create_supplier_payment_entry(
+        supplier=supplier,
+        amount=amount,
+        reference_no=payment.payment_no,
+        date=payment.payment_date,
     )
 
     # cashbook OUT
-    _cashbook_entry(
-        entry_type="OUT",
+    cash_out(
+        amount=amount,
         source_type="PURCHASE",
-        payment=payment,
-        description="Supplier Invoice Payment"
+        date=payment.payment_date,
+        reference=payment.payment_no,
+        description="Supplier Invoice Payment",
     )
 
     return payment
@@ -372,17 +335,20 @@ def supplier_advance_payment(
     )
 
     # ledger (supplier advance = debit)
-    _supplier_ledger(
-        payment,
-        description="Supplier Advance Payment"
+    create_supplier_payment_entry(
+        supplier=supplier,
+        amount=amount,
+        reference_no=payment.payment_no,
+        date=payment.payment_date,
     )
 
     # cashbook OUT
-    _cashbook_entry(
-        entry_type="OUT",
+    cash_out(
+        amount=amount,
         source_type="OTHER",
-        payment=payment,
-        description="Supplier Advance Payment"
+        date=payment.payment_date,
+        reference=payment.payment_no,
+        description="Supplier Advance Payment",
     )
 
     return payment

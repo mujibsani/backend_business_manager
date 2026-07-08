@@ -10,30 +10,6 @@ from django.dispatch import receiver
 from .models import PurchaseItem
 
 @receiver(post_save, sender=PurchaseItem)
-def update_stock_on_purchase(sender, instance, created, **kwargs):
-
-    if not created:
-        return
-
-    product = instance.product
-
-    # increase stock
-    product.stock += instance.quantity
-    product.save()
-
-    # log
-    StockLog.objects.create(
-        product=product,
-        quantity=instance.quantity,
-        type="IN",
-        reference=f"PURCHASE-{instance.purchase.invoice_no}"
-    )
-
-
-
-
-
-@receiver(post_save, sender=PurchaseItem)
 def update_purchase_total_on_save(sender, instance, **kwargs):
     instance.purchase.update_totals()
 

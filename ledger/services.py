@@ -1,18 +1,50 @@
 from decimal import Decimal
-
+from django.db.models import Sum
 from .models import LedgerEntry
 
 
+def _create_entry(
+    *,
+    party_type,
+    customer=None,
+    supplier=None,
+    reference_type,
+    reference_no,
+    debit=Decimal("0.00"),
+    credit=Decimal("0.00"),
+    description="",
+    date,
+):
+    """
+    Internal helper.
+    All ledger entries should be created through this function.
+    """
+
+    return LedgerEntry.objects.create(
+        party_type=party_type,
+        customer=customer,
+        supplier=supplier,
+        reference_type=reference_type,
+        reference_no=reference_no,
+        debit=debit,
+        credit=credit,
+        description=description,
+        date=date,
+    )
+
+
 # ==========================================================
-# LEDGER POSTING FUNCTIONS
+# CUSTOMER
 # ==========================================================
 
-def customer_sale(customer, sale):
+def create_customer_sale_entry(customer, sale):
     """
-    Create customer ledger entry when a sale invoice is created.
+    Customer purchased goods.
+    Customer owes money.
+    Debit customer ledger.
     """
 
-    LedgerEntry.objects.create(
+    return _create_entry(
         party_type="CUSTOMER",
         customer=customer,
         reference_type="SALE",
@@ -24,12 +56,13 @@ def customer_sale(customer, sale):
     )
 
 
-def customer_payment(customer, amount, reference_no, date):
+def create_customer_payment_entry(customer, amount, reference_no, date):
     """
-    Create customer ledger entry when payment is received.
+    Customer paid money.
+    Reduce customer receivable.
     """
 
-    LedgerEntry.objects.create(
+    return _create_entry(
         party_type="CUSTOMER",
         customer=customer,
         reference_type="PAYMENT",
@@ -41,12 +74,49 @@ def customer_payment(customer, amount, reference_no, date):
     )
 
 
-def supplier_purchase(supplier, purchase):
+def create_customer_adjustment_entry(
+    customer,
+    amount,
+    reference_no,
+    date,
+    description,
+):
     """
-    Create supplier ledger entry when a purchase invoice is created.
+    Positive amount = Debit
+    Negative amount = Credit
     """
 
-    LedgerEntry.objects.create(
+    if amount >= 0:
+        debit = amount
+        credit = Decimal("0.00")
+    else:
+        debit = Decimal("0.00")
+        credit = abs(amount)
+
+    return _create_entry(
+        party_type="CUSTOMER",
+        customer=customer,
+        reference_type="ADJUSTMENT",
+        reference_no=reference_no,
+        debit=debit,
+        credit=credit,
+        description=description,
+        date=date,
+    )
+
+
+# ==========================================================
+# SUPPLIER
+# ==========================================================
+
+def create_supplier_purchase_entry(supplier, purchase):
+    """
+    Purchased goods from supplier.
+    Business owes supplier.
+    Credit supplier ledger.
+    """
+
+    return _create_entry(
         party_type="SUPPLIER",
         supplier=supplier,
         reference_type="PURCHASE",
@@ -58,12 +128,18 @@ def supplier_purchase(supplier, purchase):
     )
 
 
-def supplier_payment(supplier, amount, reference_no, date):
+def create_supplier_payment_entry(
+    supplier,
+    amount,
+    reference_no,
+    date,
+):
     """
-    Create supplier ledger entry when supplier is paid.
+    Paid supplier.
+    Reduce supplier payable.
     """
 
-    LedgerEntry.objects.create(
+    return _create_entry(
         party_type="SUPPLIER",
         supplier=supplier,
         reference_type="PAYMENT",
@@ -75,131 +151,143 @@ def supplier_payment(supplier, amount, reference_no, date):
     )
 
 
-# ==========================================================
-# CUSTOMER LEDGER STATEMENT
-# ==========================================================
+def create_supplier_adjustment_entry(
+    supplier,
+    amount,
+    reference_no,
+    date,
+    description,
+):
+    """
+    Positive amount = Debit
+    Negative amount = Credit
+    """
 
+    if amount >= 0:
+        debit = amount
+        credit = Decimal("0.00")
+    else:
+        debit = Decimal("0.00")
+        credit = abs(amount)
+
+    return _create_entry(
+        party_type="SUPPLIER",
+        supplier=supplier,
+        reference_type="ADJUSTMENT",
+        reference_no=reference_no,
+        debit=debit,
+        credit=credit,
+        description=description,
+        date=date,
+    )
+
+
+
+# ======================================================
+# CUstomer Statement
+# ======================================================
 def get_customer_statement(customer, from_date=None, to_date=None):
-    """
-    Returns customer ledger statement with opening balance,
-    running balance and closing balance.
-    """
 
-    entries = LedgerEntry.objects.filter(
+    queryset = LedgerEntry.objects.filter(
         customer=customer
     ).order_by("date", "id")
 
-    opening_balance = customer.opening_balance
-
-    if customer.opening_balance_type == "PAYABLE":
-        opening_balance *= Decimal("-1")
+    opening_balance = Decimal("0.00")
 
     if from_date:
+        previous = queryset.filter(date__lt=from_date)
 
-        previous_entries = entries.filter(
-            date__lt=from_date
+        debit_total = (
+            previous.aggregate(total=Sum("debit"))["total"]
+            or Decimal("0.00")
         )
 
-        for entry in previous_entries:
-            opening_balance += entry.debit
-            opening_balance -= entry.credit
-
-        entries = entries.filter(
-            date__gte=from_date
+        credit_total = (
+            previous.aggregate(total=Sum("credit"))["total"]
+            or Decimal("0.00")
         )
+
+        opening_balance = debit_total - credit_total
+
+        queryset = queryset.filter(date__gte=from_date)
 
     if to_date:
-        entries = entries.filter(
-            date__lte=to_date
-        )
+        queryset = queryset.filter(date__lte=to_date)
 
-    running_balance = opening_balance
+    transactions = list(queryset.values(
+        "date",
+        "reference_type",
+        "reference_no",
+        "description",
+        "debit",
+        "credit",
+        "balance",
+    ))
 
-    statement = []
-
-    for entry in entries:
-
-        running_balance += entry.debit
-        running_balance -= entry.credit
-
-        statement.append({
-            "date": entry.date,
-            "reference_type": entry.reference_type,
-            "reference_no": entry.reference_no,
-            "description": entry.description,
-            "debit": entry.debit,
-            "credit": entry.credit,
-            "balance": running_balance,
-        })
+    closing_balance = (
+        queryset.last().balance
+        if queryset.exists()
+        else opening_balance
+    )
 
     return {
-        "party": customer,
         "opening_balance": opening_balance,
-        "closing_balance": running_balance,
-        "transactions": statement,
+        "closing_balance": closing_balance,
+        "transactions": transactions,
     }
 
 
-# ==========================================================
-# SUPPLIER LEDGER STATEMENT
-# ==========================================================
 
+# ======================================================
+# Supplier Statement
+# ======================================================
 def get_supplier_statement(supplier, from_date=None, to_date=None):
-    """
-    Returns supplier ledger statement with opening balance,
-    running balance and closing balance.
-    """
 
-    entries = LedgerEntry.objects.filter(
+    queryset = LedgerEntry.objects.filter(
         supplier=supplier
     ).order_by("date", "id")
 
-    opening_balance = supplier.opening_balance
-
-    if supplier.opening_balance_type == "ADVANCE":
-        opening_balance *= Decimal("-1")
+    opening_balance = Decimal("0.00")
 
     if from_date:
 
-        previous_entries = entries.filter(
-            date__lt=from_date
+        previous = queryset.filter(date__lt=from_date)
+
+        debit_total = (
+            previous.aggregate(total=Sum("debit"))["total"]
+            or Decimal("0.00")
         )
 
-        for entry in previous_entries:
-            opening_balance += entry.debit
-            opening_balance -= entry.credit
-
-        entries = entries.filter(
-            date__gte=from_date
+        credit_total = (
+            previous.aggregate(total=Sum("credit"))["total"]
+            or Decimal("0.00")
         )
+
+        opening_balance = debit_total - credit_total
+
+        queryset = queryset.filter(date__gte=from_date)
 
     if to_date:
-        entries = entries.filter(
-            date__lte=to_date
-        )
+        queryset = queryset.filter(date__lte=to_date)
 
-    running_balance = opening_balance
+    transactions = list(queryset.values(
+        "date",
+        "reference_type",
+        "reference_no",
+        "description",
+        "debit",
+        "credit",
+        "balance",
+    ))
 
-    statement = []
-
-    for entry in entries:
-
-        running_balance += entry.debit
-        running_balance -= entry.credit
-
-        statement.append({
-            "date": entry.date,
-            "reference_type": entry.reference_type,
-            "reference_no": entry.reference_no,
-            "description": entry.description,
-            "debit": entry.debit,
-            "credit": entry.credit,
-            "balance": running_balance,
-        })
+    closing_balance = (
+        queryset.last().balance
+        if queryset.exists()
+        else opening_balance
+    )
 
     return {
-        "party": supplier,
         "opening_balance": opening_balance,
-        "closing_balance": running_balance,
-        "transactions": statement,
+        "closing_balance": closing_balance,
+        "transactions": transactions,
     }

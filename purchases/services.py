@@ -2,17 +2,32 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 
 from .models import Purchase, PurchaseItem
-from products.models import Product, StockLog
-from .services import process_purchase_accounting
+
+from products.models import Product
+from products.services import stock_in
+
+from cashbook.services import cash_out
+from ledger.services import create_supplier_purchase_entry
 
 
 @transaction.atomic
-def create_purchase_invoice(supplier, invoice_no, items, paid_amount=0, date=None):
+def create_purchase_invoice(
+    supplier,
+    invoice_no,
+    items,
+    paid_amount=0,
+    date=None,
+):
     """
-    items format:
+    Create a purchase invoice.
+
+    items example:
     [
-        {"product_id": 1, "quantity": 5, "unit_price": 100},
-        ...
+        {
+            "product_id": 1,
+            "quantity": 5,
+            "unit_price": 100,
+        }
     ]
     """
 
@@ -20,82 +35,63 @@ def create_purchase_invoice(supplier, invoice_no, items, paid_amount=0, date=Non
         supplier=supplier,
         invoice_no=invoice_no,
         date=date,
-        total_amount=0,
         paid_amount=paid_amount,
-        due_amount=0,
-        status="UNPAID"
     )
 
-    total = 0
-
     for item in items:
-        product = Product.objects.select_for_update().get(id=item["product_id"])
+        try:
+            product = Product.objects.select_for_update().get(
+                id=item["product_id"]
+            )
+        except Product.DoesNotExist:
+            raise ValidationError(
+                f"Product ID {item['product_id']} does not exist."
+            )
 
         quantity = item["quantity"]
 
-        subtotal = quantity * item["unit_price"]
-        total += subtotal
+        if quantity <= 0:
+            raise ValidationError(
+                f"Invalid quantity for {product.name}"
+            )
 
-        # create purchase item
         PurchaseItem.objects.create(
             purchase=purchase,
             product=product,
             quantity=quantity,
             unit_price=item["unit_price"],
-            subtotal=subtotal
         )
 
-        # 🚀 INCREASE STOCK (purchase increases inventory)
-        product.stock += quantity
-        product.save()
-
-        # stock log
-        StockLog.objects.create(
+        # Increase stock
+        stock_in(
             product=product,
             quantity=quantity,
-            type="IN",
-            reference=f"PURCHASE-{invoice_no}"
+            reference=invoice_no,
         )
 
-    # finalize invoice
-    purchase.total_amount = total
-    purchase.due_amount = total - paid_amount
+    # Calculate totals
+    purchase.update_totals()
 
-    if purchase.due_amount <= 0:
-        purchase.status = "PAID"
-        purchase.due_amount = 0
-    elif paid_amount > 0:
-        purchase.status = "PARTIAL"
-    else:
-        purchase.status = "UNPAID"
-
-    purchase.save()
-
-    
+    # Accounting
+    process_purchase_accounting(purchase)
 
     return purchase
 
 
-from cashbook.services import create_cashbook_entry
-from ledger.services import add_ledger_entry
+def process_purchase_accounting(purchase):
+    """
+    Create accounting transactions for a purchase invoice.
+    """
 
-
-def process_purchase_accounting(purchase, supplier):
-
-    # CASHBOOK ENTRY (OUT)
-    create_cashbook_entry(
-        entry_type="OUT",
-        source_type="PURCHASE",
+    cash_out(
         amount=purchase.total_amount,
+        source_type="PURCHASE",
+        date=purchase.date,
         reference=purchase.invoice_no,
-        description="Purchase payment"
+        description=f"Purchase Invoice {purchase.invoice_no}",
     )
 
-    # LEDGER ENTRY (SUPPLIER CREDIT)
-    add_ledger_entry(
-        party_type="SUPPLIER",
-        party_name=supplier.name,
-        debit=0,
-        credit=purchase.total_amount,
-        description=f"Purchase {purchase.invoice_no}"
+    create_supplier_purchase_entry(
+        supplier=purchase.supplier,
+        purchase=purchase,
     )
