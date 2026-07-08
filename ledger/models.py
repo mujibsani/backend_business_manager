@@ -15,7 +15,9 @@ class LedgerEntry(TimeStampedModel):
 
     REFERENCE_TYPE = (
         ("SALE", "Sale"),
+        ("SALE_RETURN", "Sale Return"),
         ("PURCHASE", "Purchase"),
+        ("PURCHASE_RETURN", "Purchase Return"),
         ("PAYMENT", "Payment"),
         ("ADJUSTMENT", "Adjustment"),
     )

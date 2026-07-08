@@ -291,3 +291,28 @@ def get_supplier_statement(supplier, from_date=None, to_date=None):
         "closing_balance": closing_balance,
         "transactions": transactions,
     }
+
+
+
+def create_customer_sales_return_entry(
+    customer,
+    sales_return,
+):
+    """
+    Customer returned goods.
+
+    Reduce customer's receivable.
+
+    Credit customer ledger.
+    """
+
+    return _create_entry(
+        party_type="CUSTOMER",
+        customer=customer,
+        reference_type="SALE_RETURN",
+        reference_no=sales_return.return_no,
+        debit=Decimal("0.00"),
+        credit=sales_return.total_amount,
+        description=f"Sales Return {sales_return.return_no}",
+        date=sales_return.date,
+    )

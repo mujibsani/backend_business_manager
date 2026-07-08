@@ -2,6 +2,7 @@ from django.db import models
 
 from core.models import TimeStampedModel
 
+from django.conf import settings
 
 class ExpenseCategory(TimeStampedModel):
     """
@@ -42,6 +43,14 @@ class Expense(TimeStampedModel):
     """
     Business Expense
     """
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="expenses",
+    )
 
     category = models.ForeignKey(
         ExpenseCategory,

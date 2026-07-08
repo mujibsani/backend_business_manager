@@ -1,84 +1,58 @@
 from django.db import transaction
-
-from cashbook.models import CashbookEntry
+from django.core.exceptions import ValidationError
 
 from .models import Expense
 
+from cashbook.services import cash_out
 
-# ==========================================================
-# CREATE EXPENSE
-# ==========================================================
 
 @transaction.atomic
 def create_expense(
+    *,
     category,
     amount,
     date,
     description="",
+    created_by=None,
 ):
+    """
+    Create a business expense.
+
+    Accounting Flow
+
+        Expense
+            ↓
+        Cashbook (OUT)
+
+    Future:
+        Journal Entry
+    """
+
+    if amount <= 0:
+        raise ValidationError("Expense amount must be greater than zero.")
 
     expense = Expense.objects.create(
         category=category,
         amount=amount,
         date=date,
         description=description,
+        created_by=created_by,
     )
 
-    CashbookEntry.objects.create(
-        entry_type="OUT",
-        source_type="EXPENSE",
+    process_expense_accounting(expense)
+
+    return expense
+
+
+def process_expense_accounting(expense):
+    """
+    Create accounting entries after an expense is created.
+    """
+
+    cash_out(
         amount=expense.amount,
-        reference=f"EXP-{expense.id}",
-        description=expense.description,
+        source_type="EXPENSE",
         date=expense.date,
-    )
-
-    return expense
-
-
-# ==========================================================
-# UPDATE EXPENSE
-# ==========================================================
-
-@transaction.atomic
-def update_expense(
-    expense,
-    category,
-    amount,
-    date,
-    description="",
-):
-
-    expense.category = category
-    expense.amount = amount
-    expense.date = date
-    expense.description = description
-    expense.save()
-
-    CashbookEntry.objects.update_or_create(
-        source_type="EXPENSE",
         reference=f"EXP-{expense.id}",
-        defaults={
-            "entry_type": "OUT",
-            "amount": expense.amount,
-            "description": expense.description,
-            "date": expense.date,
-        },
+        description=expense.description or expense.category.name,
     )
-
-    return expense
-
-
-# ==========================================================
-# DELETE EXPENSE
-# ==========================================================
-
-@transaction.atomic
-def delete_expense(expense):
-
-    CashbookEntry.objects.filter(
-        source_type="EXPENSE",
-        reference=f"EXP-{expense.id}",
-    ).delete()
-
-    expense.delete()
