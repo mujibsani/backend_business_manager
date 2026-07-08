@@ -1,27 +1,16 @@
-from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .services import (
-    get_dashboard_data,
-    get_profit_summary,
-    get_daily_sales,
-    get_weekly_sales,
-    get_monthly_sales
-)
-
+from reports.services import get_dashboard_summary
 
 
 class DashboardAPIView(APIView):
+    """
+    Dashboard Summary Report
+    """
 
     def get(self, request):
 
-        return Response({
-            "dashboard": get_dashboard_data(),
-            "profit": get_profit_summary(),
-            "charts": {
-                "daily_sales": get_daily_sales(),
-                "weekly_sales": get_weekly_sales(),
-                "monthly_sales": get_monthly_sales(),
-            }
-        })
-    
+        return Response(
+            get_dashboard_summary()
+        )
