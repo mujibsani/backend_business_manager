@@ -68,3 +68,5 @@ def stock_out(
 def available_stock(product):
 
     return product.stock
+
+

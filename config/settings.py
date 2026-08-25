@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'reports',
     'locations',
     'expenses',
+    'purchase_returns',
     'sales.apps.SalesConfig',
     'purchases.apps.PurchasesConfig',
     'payments.apps.PaymentsConfig',
@@ -142,3 +143,5 @@ REST_FRAMEWORK = {
 
     "PAGE_SIZE": 20,
 }
+
+AUTH_USER_MODEL = "accounts.User"
