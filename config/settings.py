@@ -34,9 +34,6 @@ INSTALLED_APPS = [
     'customers',
     'suppliers',
     'products',
-    # 'sales',
-    # 'purchases',
-    # 'payments',
     'cashbook',
     'ledger',
     'reports',
@@ -131,17 +128,17 @@ USE_TZ = True
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework.authentication.BasicAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-
     "DEFAULT_PAGINATION_CLASS":
         "core.pagination.StandardResultsSetPagination",
-
     "PAGE_SIZE": 20,
 }
+
 
 AUTH_USER_MODEL = "accounts.User"

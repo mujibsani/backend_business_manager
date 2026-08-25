@@ -1,53 +1,121 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets
 from rest_framework.response import Response
 
-from .models import Expense
-from .serializers import ExpenseSerializer
+from .models import Expense, ExpenseCategory
+
+from .serializers import (
+    ExpenseSerializer,
+    ExpenseCategorySerializer,
+)
+
 from .services import create_expense
 
-from .models import ExpenseCategory
+from core.permissions import (
+    IsAdmin,
+    IsAdminOrManager,
+    IsStaff,
+)
 
+
+# ==========================================================
+# EXPENSE CATEGORY
+# ==========================================================
+
+class ExpenseCategoryViewSet(viewsets.ModelViewSet):
+
+    queryset = ExpenseCategory.objects.all().order_by("name")
+
+    serializer_class = ExpenseCategorySerializer
+
+    def get_permissions(self):
+
+        if self.action in [
+            "create",
+            "update",
+            "partial_update",
+            "destroy",
+        ]:
+            return [IsAdminOrManager()]
+
+        return [IsStaff()]
+
+
+# ==========================================================
+# EXPENSE
+# ==========================================================
 
 class ExpenseViewSet(viewsets.ModelViewSet):
 
-    queryset = Expense.objects.all().order_by("-date", "-id")
+    queryset = Expense.objects.select_related(
+        "category",
+        "created_by",
+    ).all().order_by(
+        "-date",
+        "-id",
+    )
+
     serializer_class = ExpenseSerializer
 
-    def create(self, request, *args, **kwargs):
+    def get_permissions(self):
 
-        category_id = request.data.get("category_id")
-        amount = request.data.get("amount")
-        date = request.data.get("date")
-        description = request.data.get("description", "")
+        # Only ADMIN can delete expenses.
+        if self.action == "destroy":
+            return [IsAdmin()]
 
-        # -----------------------------
-        # VALIDATE CATEGORY
-        # -----------------------------
-        try:
-            category = ExpenseCategory.objects.get(id=category_id)
-        except ExpenseCategory.DoesNotExist:
-            return Response(
-                {"error": "Expense category not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        # ADMIN + MANAGER can edit.
+        if self.action in [
+            "update",
+            "partial_update",
+        ]:
+            return [IsAdminOrManager()]
 
-        # -----------------------------
-        # CREATE EXPENSE
-        # -----------------------------
+        # ADMIN + MANAGER + STAFF
+        # can view and create.
+        return [IsStaff()]
+
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs,
+    ):
+
+        # ------------------------------------------
+        # Validate request
+        # ------------------------------------------
+
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        # ------------------------------------------
+        # Create through service
+        # ------------------------------------------
+
         expense = create_expense(
-            category=category,
-            amount=amount,
-            date=date,
-            description=description,
+            category=serializer.validated_data["category"],
+            amount=serializer.validated_data["amount"],
+            date=serializer.validated_data["date"],
+            description=serializer.validated_data.get(
+                "description",
+                "",
+            ),
             created_by=request.user,
         )
 
-        serializer = self.get_serializer(expense)
+        # ------------------------------------------
+        # Response
+        # ------------------------------------------
+
+        response_serializer = self.get_serializer(
+            expense
+        )
 
         return Response(
-            {
-                "message": "Expense created successfully.",
-                "expense": serializer.data,
-            },
-            status=status.HTTP_201_CREATED,
+            response_serializer.data,
+            status=201,
         )

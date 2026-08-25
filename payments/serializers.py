@@ -1,71 +1,207 @@
 from rest_framework import serializers
 
 from .models import Payment
-from sales.models import Sale
-from purchases.models import Purchase
-from customers.models import Customer
-from suppliers.models import Supplier
 
 
-class PaymentSerializer(serializers.ModelSerializer):
+class PaymentSerializer(
+    serializers.ModelSerializer
+):
 
     class Meta:
+
         model = Payment
+
         fields = "__all__"
-        read_only_fields = ("payment_no",)
+
+        read_only_fields = (
+            "payment_no",
+            "received_by",
+        )
 
     def validate(self, attrs):
 
-        payment_type = attrs.get("payment_type")
-        sale = attrs.get("sale")
-        purchase = attrs.get("purchase")
-        customer = attrs.get("customer")
-        supplier = attrs.get("supplier")
-        amount = attrs.get("amount")
+        payment_type = attrs.get(
+            "payment_type"
+        )
 
-        if amount and amount <= 0:
-            raise serializers.ValidationError("Amount must be greater than zero.")
+        sale = attrs.get(
+            "sale"
+        )
 
-        # -----------------------------
-        # CUSTOMER VALIDATION
-        # -----------------------------
+        purchase = attrs.get(
+            "purchase"
+        )
+
+        customer = attrs.get(
+            "customer"
+        )
+
+        supplier = attrs.get(
+            "supplier"
+        )
+
+        amount = attrs.get(
+            "amount"
+        )
+
+        # ==================================================
+        # AMOUNT
+        # ==================================================
+
+        if amount is None:
+
+            raise serializers.ValidationError(
+                {
+                    "amount": (
+                        "Amount is required."
+                    )
+                }
+            )
+
+        if amount <= 0:
+
+            raise serializers.ValidationError(
+                {
+                    "amount": (
+                        "Amount must be greater "
+                        "than zero."
+                    )
+                }
+            )
+
+        # ==================================================
+        # CUSTOMER PAYMENT
+        # ==================================================
+
         if payment_type == "CUSTOMER":
 
+            # Customer OR sale must exist.
             if not customer and not sale:
+
                 raise serializers.ValidationError(
-                    "Customer or Sale is required for customer payment."
+                    {
+                        "customer": (
+                            "Customer or Sale is "
+                            "required for customer "
+                            "payment."
+                        )
+                    }
                 )
 
-            if sale and customer and sale.customer != customer:
+            # Supplier must never be present.
+            if supplier:
+
                 raise serializers.ValidationError(
-                    "Sale does not belong to selected customer."
+                    {
+                        "supplier": (
+                            "Supplier must be empty "
+                            "for customer payment."
+                        )
+                    }
                 )
 
+            # Sale must belong to customer.
+            if (
+                sale
+                and customer
+                and sale.customer_id
+                != customer.id
+            ):
+
+                raise serializers.ValidationError(
+                    {
+                        "sale": (
+                            "Selected sale does not "
+                            "belong to selected customer."
+                        )
+                    }
+                )
+
+            # Payment against sale.
             if sale:
-                if sale.due_amount < amount:
+
+                if amount > sale.due_amount:
+
                     raise serializers.ValidationError(
-                        "Payment exceeds due amount."
+                        {
+                            "amount": (
+                                "Payment exceeds "
+                                "the sale due amount."
+                            )
+                        }
                     )
 
-        # -----------------------------
-        # SUPPLIER VALIDATION
-        # -----------------------------
+        # ==================================================
+        # SUPPLIER PAYMENT
+        # ==================================================
+
         elif payment_type == "SUPPLIER":
 
+            # Supplier OR purchase must exist.
             if not supplier and not purchase:
+
                 raise serializers.ValidationError(
-                    "Supplier or Purchase is required for supplier payment."
+                    {
+                        "supplier": (
+                            "Supplier or Purchase is "
+                            "required for supplier "
+                            "payment."
+                        )
+                    }
                 )
 
-            if purchase and supplier and purchase.supplier != supplier:
+            # Customer must never be present.
+            if customer:
+
                 raise serializers.ValidationError(
-                    "Purchase does not belong to selected supplier."
+                    {
+                        "customer": (
+                            "Customer must be empty "
+                            "for supplier payment."
+                        )
+                    }
                 )
 
+            # Purchase must belong to supplier.
+            if (
+                purchase
+                and supplier
+                and purchase.supplier_id
+                != supplier.id
+            ):
+
+                raise serializers.ValidationError(
+                    {
+                        "purchase": (
+                            "Selected purchase does not "
+                            "belong to selected supplier."
+                        )
+                    }
+                )
+
+            # Payment against purchase.
             if purchase:
-                if purchase.due_amount < amount:
+
+                if amount > purchase.due_amount:
+
                     raise serializers.ValidationError(
-                        "Payment exceeds due amount."
+                        {
+                            "amount": (
+                                "Payment exceeds "
+                                "the purchase due amount."
+                            )
+                        }
                     )
+
+        else:
+
+            raise serializers.ValidationError(
+                {
+                    "payment_type": (
+                        "Payment type must be "
+                        "CUSTOMER or SUPPLIER."
+                    )
+                }
+            )
 
         return attrs

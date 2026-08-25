@@ -1,6 +1,8 @@
 from decimal import Decimal
 
 from django.db import models
+from django.core.exceptions import ValidationError
+
 from core.models import TimeStampedModel
 from customers.models import Customer
 from suppliers.models import Supplier
@@ -82,11 +84,15 @@ class LedgerEntry(TimeStampedModel):
         ordering = ["date", "id"]
 
     def clean(self):
-        if self.party_type == "CUSTOMER" and not self.customer:
-            raise ValueError("Customer is required.")
+            if self.party_type == "CUSTOMER" and not self.customer:
+                raise ValidationError({
+                    "customer": "Customer is required for a customer ledger entry."
+                })
 
-        if self.party_type == "SUPPLIER" and not self.supplier:
-            raise ValueError("Supplier is required.")
+            if self.party_type == "SUPPLIER" and not self.supplier:
+                raise ValidationError({
+                    "supplier": "Supplier is required for a supplier ledger entry."
+                })
 
     def save(self, *args, **kwargs):
 

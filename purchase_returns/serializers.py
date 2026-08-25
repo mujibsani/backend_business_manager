@@ -3,7 +3,11 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
-from .models import PurchaseReturn, PurchaseReturnItem
+from .models import (
+    PurchaseReturn,
+    PurchaseReturnItem,
+)
+
 from .services import create_purchase_return
 
 
@@ -11,13 +15,9 @@ from .services import create_purchase_return
 # CREATE ITEM INPUT
 # ==========================================================
 
-class PurchaseReturnItemInputSerializer(serializers.Serializer):
-    """
-    Input serializer for one Purchase Return item.
-
-    unit_price is intentionally not accepted from the client.
-    The service uses the original PurchaseItem.unit_price.
-    """
+class PurchaseReturnItemInputSerializer(
+    serializers.Serializer
+):
 
     product_id = serializers.IntegerField(
         required=True
@@ -35,10 +35,9 @@ class PurchaseReturnItemInputSerializer(serializers.Serializer):
 # CREATE PURCHASE RETURN
 # ==========================================================
 
-class PurchaseReturnCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer used when creating a Purchase Return.
-    """
+class PurchaseReturnCreateSerializer(
+    serializers.ModelSerializer
+):
 
     items = PurchaseReturnItemInputSerializer(
         many=True,
@@ -47,6 +46,7 @@ class PurchaseReturnCreateSerializer(serializers.ModelSerializer):
     )
 
     class Meta:
+
         model = PurchaseReturn
 
         fields = (
@@ -101,6 +101,7 @@ class PurchaseReturnCreateSerializer(serializers.ModelSerializer):
 
             return create_purchase_return(
                 purchase=purchase,
+                supplier=purchase.supplier,
                 items=items,
                 refund_amount=validated_data.get(
                     "refund_amount",
@@ -133,9 +134,6 @@ class PurchaseReturnCreateSerializer(serializers.ModelSerializer):
 class PurchaseReturnItemSerializer(
     serializers.ModelSerializer
 ):
-    """
-    Read-only representation of a Purchase Return item.
-    """
 
     product_name = serializers.CharField(
         source="product.name",
@@ -143,6 +141,7 @@ class PurchaseReturnItemSerializer(
     )
 
     class Meta:
+
         model = PurchaseReturnItem
 
         fields = (
@@ -164,9 +163,6 @@ class PurchaseReturnItemSerializer(
 class PurchaseReturnSerializer(
     serializers.ModelSerializer
 ):
-    """
-    Read-only Purchase Return response serializer.
-    """
 
     supplier_name = serializers.CharField(
         source="supplier.name",
@@ -186,6 +182,7 @@ class PurchaseReturnSerializer(
     )
 
     class Meta:
+
         model = PurchaseReturn
 
         fields = (

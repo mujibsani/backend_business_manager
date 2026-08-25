@@ -11,21 +11,35 @@ from customers.models import Customer
 # ==========================================================
 
 class Sale(TimeStampedModel):
+    """
+    Sales invoice.
 
-    STATUS_CHOICES = (
-        ("PAID", "Paid"),
-        ("PARTIAL", "Partial"),
-        ("UNPAID", "Unpaid"),
-    )
+    Business rules such as:
+        - stock reduction
+        - cashbook entry
+        - customer ledger entry
+        - invoice creation
+
+    are handled by services.py.
+
+    No signals are used.
+    """
+
+    class Status(models.TextChoices):
+        PAID = "PAID", "Paid"
+        PARTIAL = "PARTIAL", "Partial"
+        UNPAID = "UNPAID", "Unpaid"
 
     invoice_no = models.CharField(
         max_length=50,
         unique=True,
+        db_index=True,
     )
 
     customer = models.ForeignKey(
         Customer,
         on_delete=models.PROTECT,
+        related_name="sales",
     )
 
     sales_person = models.ForeignKey(
@@ -36,7 +50,9 @@ class Sale(TimeStampedModel):
         blank=True,
     )
 
-    date = models.DateField()
+    date = models.DateField(
+        db_index=True,
+    )
 
     total_amount = models.DecimalField(
         max_digits=14,
@@ -58,14 +74,23 @@ class Sale(TimeStampedModel):
 
     status = models.CharField(
         max_length=20,
-        choices=STATUS_CHOICES,
-        default="UNPAID",
+        choices=Status.choices,
+        default=Status.UNPAID,
+        db_index=True,
     )
 
     def __str__(self):
         return self.invoice_no
 
     def update_totals(self):
+        """
+        Recalculate invoice totals from SaleItems.
+
+        This method does NOT modify stock.
+
+        Stock changes are handled by:
+            sales.services.create_sale_invoice()
+        """
 
         total = (
             self.items.aggregate(
@@ -76,26 +101,32 @@ class Sale(TimeStampedModel):
 
         self.total_amount = total
 
+        # Never allow a negative paid amount.
+        if self.paid_amount < 0:
+            self.paid_amount = 0
+
+        # Prevent an invalid due amount.
         self.due_amount = (
             total - self.paid_amount
         )
 
         if self.due_amount <= 0:
 
-            self.status = "PAID"
             self.due_amount = 0
+            self.status = self.Status.PAID
 
         elif self.paid_amount > 0:
 
-            self.status = "PARTIAL"
+            self.status = self.Status.PARTIAL
 
         else:
 
-            self.status = "UNPAID"
+            self.status = self.Status.UNPAID
 
         self.save(
             update_fields=[
                 "total_amount",
+                "paid_amount",
                 "due_amount",
                 "status",
             ]
@@ -107,6 +138,18 @@ class Sale(TimeStampedModel):
 # ==========================================================
 
 class SaleItem(TimeStampedModel):
+    """
+    Individual product line inside a sale invoice.
+
+    subtotal is calculated automatically from:
+
+        quantity × unit_price
+
+    Stock is NOT changed here.
+
+    Stock changes are handled explicitly by
+    sales.services.create_sale_invoice().
+    """
 
     sale = models.ForeignKey(
         Sale,
@@ -117,6 +160,7 @@ class SaleItem(TimeStampedModel):
     product = models.ForeignKey(
         "products.Product",
         on_delete=models.PROTECT,
+        related_name="sale_items",
     )
 
     quantity = models.DecimalField(
@@ -132,11 +176,19 @@ class SaleItem(TimeStampedModel):
     subtotal = models.DecimalField(
         max_digits=14,
         decimal_places=2,
-        blank=True,
-        null=True,
+        default=0,
     )
 
+    def __str__(self):
+        return (
+            f"{self.sale.invoice_no} - "
+            f"{self.product.name}"
+        )
+
     def save(self, *args, **kwargs):
+        """
+        Calculate line subtotal before saving.
+        """
 
         self.subtotal = (
             self.quantity * self.unit_price

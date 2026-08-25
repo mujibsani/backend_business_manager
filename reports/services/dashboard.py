@@ -13,28 +13,26 @@ from suppliers.models import Supplier
 from cashbook.models import CashbookEntry
 
 
-# ==========================================================
-# TODAY SUMMARY
-# ==========================================================
-
 def get_today_summary():
-
     today = timezone.localdate()
 
     sales = (
-        Sale.objects.filter(date=today)
+        Sale.objects
+        .filter(date=today)
         .aggregate(total=Sum("total_amount"))["total"]
         or Decimal("0.00")
     )
 
     purchases = (
-        Purchase.objects.filter(date=today)
+        Purchase.objects
+        .filter(date=today)
         .aggregate(total=Sum("total_amount"))["total"]
         or Decimal("0.00")
     )
 
     expenses = (
-        Expense.objects.filter(date=today)
+        Expense.objects
+        .filter(date=today)
         .aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
@@ -46,35 +44,36 @@ def get_today_summary():
     }
 
 
-# ==========================================================
-# MONTH SUMMARY
-# ==========================================================
-
 def get_month_summary():
-
     today = timezone.localdate()
 
     sales = (
-        Sale.objects.filter(
+        Sale.objects
+        .filter(
             date__year=today.year,
             date__month=today.month,
-        ).aggregate(total=Sum("total_amount"))["total"]
+        )
+        .aggregate(total=Sum("total_amount"))["total"]
         or Decimal("0.00")
     )
 
     purchases = (
-        Purchase.objects.filter(
+        Purchase.objects
+        .filter(
             date__year=today.year,
             date__month=today.month,
-        ).aggregate(total=Sum("total_amount"))["total"]
+        )
+        .aggregate(total=Sum("total_amount"))["total"]
         or Decimal("0.00")
     )
 
     expenses = (
-        Expense.objects.filter(
+        Expense.objects
+        .filter(
             date__year=today.year,
             date__month=today.month,
-        ).aggregate(total=Sum("amount"))["total"]
+        )
+        .aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
 
@@ -85,20 +84,17 @@ def get_month_summary():
     }
 
 
-# ==========================================================
-# CASH SUMMARY
-# ==========================================================
-
 def get_cash_summary():
-
     cash_in = (
-        CashbookEntry.objects.filter(entry_type="IN")
+        CashbookEntry.objects
+        .filter(entry_type="IN")
         .aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
 
     cash_out = (
-        CashbookEntry.objects.filter(entry_type="OUT")
+        CashbookEntry.objects
+        .filter(entry_type="OUT")
         .aggregate(total=Sum("amount"))["total"]
         or Decimal("0.00")
     )
@@ -110,16 +106,15 @@ def get_cash_summary():
     }
 
 
-# ==========================================================
-# INVENTORY SUMMARY
-# ==========================================================
-
 def get_inventory_summary():
 
     inventory = Product.objects.aggregate(
         inventory_value=Sum(
             models.F("stock") * models.F("cost_price"),
-            output_field=models.DecimalField(max_digits=20, decimal_places=2),
+            output_field=models.DecimalField(
+                max_digits=20,
+                decimal_places=2,
+            ),
         )
     )
 
@@ -128,25 +123,26 @@ def get_inventory_summary():
     ).count()
 
     return {
-        "inventory_value": inventory["inventory_value"] or Decimal("0.00"),
+        "inventory_value": (
+            inventory["inventory_value"]
+            or Decimal("0.00")
+        ),
         "low_stock_products": low_stock,
         "total_products": Product.objects.count(),
     }
 
 
-# ==========================================================
-# PARTY SUMMARY
-# ==========================================================
-
 def get_party_summary():
 
     customer_due = (
-        Sale.objects.aggregate(total=Sum("due_amount"))["total"]
+        Sale.objects
+        .aggregate(total=Sum("due_amount"))["total"]
         or Decimal("0.00")
     )
 
     supplier_due = (
-        Purchase.objects.aggregate(total=Sum("due_amount"))["total"]
+        Purchase.objects
+        .aggregate(total=Sum("due_amount"))["total"]
         or Decimal("0.00")
     )
 
@@ -157,10 +153,6 @@ def get_party_summary():
         "suppliers": Supplier.objects.count(),
     }
 
-
-# ==========================================================
-# COMPLETE DASHBOARD
-# ==========================================================
 
 def get_dashboard_summary():
 

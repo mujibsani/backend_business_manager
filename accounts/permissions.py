@@ -37,22 +37,35 @@ class IsManager(BasePermission):
 
 class IsStaff(BasePermission):
     """
-    Allows ADMIN, MANAGER and STAFF users.
+    Allows authenticated business users with one of the
+    permitted operational roles.
+
+    Allowed:
+        ADMIN
+        MANAGER
+        STAFF
     """
 
-    message = "Authenticated staff access required."
+    message = (
+        "You do not have permission to perform this action."
+    )
 
     def has_permission(self, request, view):
-        return (
-            request.user
-            and request.user.is_authenticated
-            and request.user.role
-            in (
-                request.user.Role.ADMIN,
-                request.user.Role.MANAGER,
-                request.user.Role.STAFF,
-            )
-        )
+
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        role = getattr(user, "role", None)
+
+        allowed_roles = {
+            "ADMIN",
+            "MANAGER",
+            "STAFF",
+        }
+
+        return str(role).upper() in allowed_roles
 
 
 class IsAdminOrManager(BasePermission):

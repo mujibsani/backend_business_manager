@@ -1,36 +1,82 @@
-from django.db import transaction
+from decimal import Decimal, InvalidOperation
+
 from django.core.exceptions import ValidationError
-
-from .models import Sale, SaleItem
-
-from products.models import Product
-from products.services import stock_out
+from django.db import transaction
 
 from cashbook.services import cash_in
 from ledger.services import create_customer_sale_entry
+from products.models import Product
+from products.services import stock_out
+
+from .models import Sale, SaleItem
 
 
 @transaction.atomic
 def create_sale_invoice(
+    *,
     customer,
     invoice_no,
     items,
-    paid_amount=0,
-    date=None,
+    paid_amount=Decimal("0.00"),
+    date,
     sales_person=None,
 ):
     """
-    Create a sale invoice.
+    Create a complete sale invoice.
 
-    items example:
-    [
-        {
-            "product_id": 1,
-            "quantity": 2,
-            "unit_price": 100,
-        }
-    ]
+    Handles:
+
+    - Sale creation
+    - Sale items
+    - Stock reduction
+    - Stock logs
+    - Invoice totals
+    - Customer ledger
+    - Cashbook
     """
+
+    # ------------------------------------------------------
+    # PAID AMOUNT
+    # ------------------------------------------------------
+
+    try:
+        paid_amount = Decimal(str(paid_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError(
+            "Invalid paid amount."
+        )
+
+    if paid_amount < Decimal("0.00"):
+
+        raise ValidationError(
+            "Paid amount cannot be negative."
+        )
+
+    # ------------------------------------------------------
+    # ITEMS
+    # ------------------------------------------------------
+
+    if not items:
+
+        raise ValidationError(
+            "At least one sale item is required."
+        )
+
+    # ------------------------------------------------------
+    # DUPLICATE INVOICE
+    # ------------------------------------------------------
+
+    if Sale.objects.filter(
+        invoice_no=invoice_no
+    ).exists():
+
+        raise ValidationError(
+            "Invoice number already exists."
+        )
+
+    # ------------------------------------------------------
+    # CREATE SALE
+    # ------------------------------------------------------
 
     sale = Sale.objects.create(
         customer=customer,
@@ -40,47 +86,159 @@ def create_sale_invoice(
         paid_amount=paid_amount,
     )
 
+    total_amount = Decimal("0.00")
+
+    # ------------------------------------------------------
+    # CREATE ITEMS
+    # ------------------------------------------------------
+
     for item in items:
 
+        product_id = item.get(
+            "product_id"
+        )
+
+        if not product_id:
+
+            raise ValidationError(
+                "product_id is required."
+            )
+
         try:
-            product = Product.objects.select_for_update().get(
-                id=item["product_id"]
+
+            quantity = Decimal(
+                str(item.get("quantity"))
             )
+
+        except (
+            InvalidOperation,
+            TypeError,
+            ValueError,
+        ):
+
+            raise ValidationError(
+                "Invalid quantity."
+            )
+
+        try:
+
+            unit_price = Decimal(
+                str(item.get("unit_price"))
+            )
+
+        except (
+            InvalidOperation,
+            TypeError,
+            ValueError,
+        ):
+
+            raise ValidationError(
+                "Invalid unit price."
+            )
+
+        # --------------------------------------------------
+        # QUANTITY
+        # --------------------------------------------------
+
+        if quantity <= Decimal("0.00"):
+
+            raise ValidationError(
+                "Quantity must be greater than zero."
+            )
+
+        # --------------------------------------------------
+        # UNIT PRICE
+        # --------------------------------------------------
+
+        if unit_price < Decimal("0.00"):
+
+            raise ValidationError(
+                "Unit price cannot be negative."
+            )
+
+        # --------------------------------------------------
+        # PRODUCT
+        # --------------------------------------------------
+
+        try:
+
+            product = (
+                Product.objects
+                .select_for_update()
+                .get(pk=product_id)
+            )
+
         except Product.DoesNotExist:
+
             raise ValidationError(
-                f"Product ID {item['product_id']} does not exist."
+                f"Product ID {product_id} "
+                "does not exist."
             )
 
-        quantity = item["quantity"]
-
-        if quantity <= 0:
-            raise ValidationError(
-                f"Invalid quantity for {product.name}"
-            )
+        # --------------------------------------------------
+        # STOCK
+        # --------------------------------------------------
 
         if product.stock < quantity:
+
             raise ValidationError(
-                f"Not enough stock for {product.name}"
+                f"Not enough stock for "
+                f"{product.name}. "
+                f"Available stock: "
+                f"{product.stock}"
             )
+
+        # --------------------------------------------------
+        # SUBTOTAL
+        # --------------------------------------------------
+
+        subtotal = quantity * unit_price
+
+        # --------------------------------------------------
+        # SALE ITEM
+        # --------------------------------------------------
 
         SaleItem.objects.create(
             sale=sale,
             product=product,
             quantity=quantity,
-            unit_price=item["unit_price"],
+            unit_price=unit_price,
+            subtotal=subtotal,
         )
 
-        # Reduce stock
+        # --------------------------------------------------
+        # STOCK OUT
+        # --------------------------------------------------
+
         stock_out(
             product=product,
             quantity=quantity,
-            reference=invoice_no,
+            reference=f"SALE-{invoice_no}",
         )
 
-    # Calculate invoice totals
+        total_amount += subtotal
+
+    # ------------------------------------------------------
+    # PAID CANNOT EXCEED TOTAL
+    # ------------------------------------------------------
+
+    if paid_amount > total_amount:
+
+        raise ValidationError(
+            "Paid amount cannot be greater "
+            "than invoice total."
+        )
+
+    # ------------------------------------------------------
+    # UPDATE TOTALS
+    # ------------------------------------------------------
+
     sale.update_totals()
 
-    # Accounting
+    # ------------------------------------------------------
+    # ACCOUNTING
+    # ------------------------------------------------------
+
     process_sale_accounting(sale)
 
     return sale
@@ -88,22 +246,29 @@ def create_sale_invoice(
 
 def process_sale_accounting(sale):
     """
-    Create accounting entries for a sale invoice.
+    Create accounting entries for a sale.
+
+    Customer ledger:
+        Invoice total becomes receivable.
+
+    Cashbook:
+        Only actual received cash is recorded.
     """
 
-    # Customer Ledger (Customer Receivable)
     create_customer_sale_entry(
         customer=sale.customer,
         sale=sale,
     )
 
-    # Cashbook
-    # Only record cash if money was actually received.
-    if sale.paid_amount > 0:
+    if sale.paid_amount > Decimal("0.00"):
+
         cash_in(
             amount=sale.paid_amount,
             source_type="SALE",
             date=sale.date,
             reference=sale.invoice_no,
-            description=f"Sale Invoice {sale.invoice_no}",
+            description=(
+                f"Sale Invoice "
+                f"{sale.invoice_no}"
+            ),
         )

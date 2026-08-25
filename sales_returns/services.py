@@ -1,16 +1,44 @@
-from decimal import Decimal
-from django.db import models
-from django.db.models import Sum
-from django.db import transaction
-from django.core.exceptions import ValidationError
+from decimal import Decimal, InvalidOperation
 
-from .models import SalesReturn, SalesReturnItem
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models import Sum
+
+from .models import (
+    SalesReturn,
+    SalesReturnItem,
+)
 
 from products.models import Product
 from products.services import stock_in
 
+from sales.models import Sale
+
 from cashbook.services import cash_out
-from ledger.services import create_customer_sales_return_entry
+
+from ledger.services import (
+    create_customer_sales_return_entry,
+)
+
+
+# ==========================================================
+# DECIMAL HELPER
+# ==========================================================
+
+def _to_decimal(value):
+
+    try:
+        return Decimal(str(value))
+
+    except (
+        InvalidOperation,
+        TypeError,
+        ValueError,
+    ):
+
+        raise ValidationError(
+            f"Invalid decimal value: {value}"
+        )
 
 
 # ==========================================================
@@ -18,20 +46,27 @@ from ledger.services import create_customer_sales_return_entry
 # ==========================================================
 
 def generate_return_no():
-    """
-    Generates sequential return number:
-    SR-000001
-    SR-000002
-    """
 
-    last = SalesReturn.objects.order_by("-id").first()
+    last = (
+        SalesReturn.objects
+        .order_by("-id")
+        .first()
+    )
 
     if not last:
         return "SR-000001"
 
     try:
-        number = int(last.return_no.split("-")[1])
-    except Exception:
+
+        number = int(
+            last.return_no.split("-")[1]
+        )
+
+    except (
+        ValueError,
+        IndexError,
+    ):
+
         number = last.id
 
     return f"SR-{number + 1:06d}"
@@ -46,54 +81,91 @@ def _update_sale_after_return(
     return_amount,
     refund_amount=Decimal("0.00"),
 ):
-    """
-    Recalculate the original sale after a return.
 
-    Example:
+    return_amount = _to_decimal(
+        return_amount
+    )
 
-    Original
-        Total = 10000
-        Paid  = 6000
-        Due   = 4000
+    refund_amount = _to_decimal(
+        refund_amount
+    )
 
-    Return = 2000
-    Refund = 1000
+    if return_amount <= Decimal("0.00"):
+        raise ValidationError(
+            "Return amount must be greater than zero."
+        )
 
-    New
-        Total = 8000
-        Paid  = 5000
-        Due   = 3000
-    """
+    if refund_amount < Decimal("0.00"):
+        raise ValidationError(
+            "Refund amount cannot be negative."
+        )
 
-    return_amount = Decimal(str(return_amount))
-    refund_amount = Decimal(str(refund_amount))
+    if refund_amount > return_amount:
+        raise ValidationError(
+            "Refund amount cannot exceed "
+            "return amount."
+        )
 
-    # Reduce invoice amount
+    if refund_amount > sale.paid_amount:
+        raise ValidationError(
+            "Refund amount cannot exceed "
+            "the amount already paid."
+        )
+
+    # ------------------------------------------------------
+    # REDUCE SALE TOTAL
+    # ------------------------------------------------------
+
     sale.total_amount -= return_amount
 
     if sale.total_amount < Decimal("0.00"):
+
         sale.total_amount = Decimal("0.00")
 
-    # Reduce paid amount if refund issued
+    # ------------------------------------------------------
+    # REDUCE PAID AMOUNT BY REFUND
+    # ------------------------------------------------------
+
     if refund_amount > Decimal("0.00"):
 
         sale.paid_amount -= refund_amount
 
         if sale.paid_amount < Decimal("0.00"):
+
             sale.paid_amount = Decimal("0.00")
 
-    # Recalculate due
-    sale.due_amount = sale.total_amount - sale.paid_amount
+    # ------------------------------------------------------
+    # RECALCULATE DUE
+    # ------------------------------------------------------
 
-    if sale.due_amount <= Decimal("0.00"):
-        sale.status = "PAID"
+    sale.due_amount = (
+        sale.total_amount
+        - sale.paid_amount
+    )
+
+    if sale.due_amount < Decimal("0.00"):
+
         sale.due_amount = Decimal("0.00")
 
+    # ------------------------------------------------------
+    # STATUS
+    # ------------------------------------------------------
+
+    if sale.due_amount == Decimal("0.00"):
+
+        sale.status = Sale.Status.PAID
+
     elif sale.paid_amount > Decimal("0.00"):
-        sale.status = "PARTIAL"
+
+        sale.status = Sale.Status.PARTIAL
 
     else:
-        sale.status = "UNPAID"
+
+        sale.status = Sale.Status.UNPAID
+
+    # ------------------------------------------------------
+    # SAVE
+    # ------------------------------------------------------
 
     sale.save(
         update_fields=[
@@ -116,76 +188,247 @@ def create_sales_return(
     refund_amount=Decimal("0.00"),
     reason="",
     created_by=None,
+    date=None,
 ):
-    """
-    Creates a complete sales return.
 
-    Responsibilities
+    # ======================================================
+    # BASIC VALIDATION
+    # ======================================================
 
-    ✔ Create Sales Return
-    ✔ Create Return Items
-    ✔ Increase Stock
-    ✔ Update Original Sale
-    ✔ Customer Ledger
-    ✔ Cashbook (Refund)
-    """
+    if not sale:
+        raise ValidationError(
+            "Sale is required."
+        )
 
-    refund_amount = Decimal(str(refund_amount))
+    if not items:
+        raise ValidationError(
+            "Return items are required."
+        )
+
+    # ======================================================
+    # LOCK SALE
+    # ======================================================
+
+    sale = (
+        Sale.objects
+        .select_for_update()
+        .select_related("customer")
+        .get(pk=sale.pk)
+    )
+
+    # ======================================================
+    # REFUND
+    # ======================================================
+
+    refund_amount = _to_decimal(
+        refund_amount
+    )
+
+    if refund_amount < Decimal("0.00"):
+
+        raise ValidationError(
+            "Refund amount cannot be negative."
+        )
+
+    if refund_amount > sale.paid_amount:
+
+        raise ValidationError(
+            "Refund amount cannot exceed "
+            "the amount already paid."
+        )
+
+    # ======================================================
+    # DATE
+    # ======================================================
+
+    return_date = (
+        date
+        if date is not None
+        else sale.date
+    )
+
+    # ======================================================
+    # CREATE HEADER
+    # ======================================================
 
     sales_return = SalesReturn.objects.create(
         return_no=generate_return_no(),
         sale=sale,
         customer=sale.customer,
-        date=sale.date,
+        date=return_date,
+        total_amount=Decimal("0.00"),
         refund_amount=refund_amount,
         reason=reason,
-        status="COMPLETED",
+        status=SalesReturn.Status.COMPLETED,
         created_by=created_by,
     )
 
     total_return = Decimal("0.00")
 
+    processed_products = set()
+
+    # ======================================================
+    # PROCESS ITEMS
+    # ======================================================
+
     for item in items:
 
-        product = Product.objects.select_for_update().get(
-            id=item["product_id"]
+        product_id = item.get(
+            "product_id"
         )
 
-        quantity = Decimal(str(item["quantity"]))
-        unit_price = Decimal(str(item["unit_price"]))
+        # --------------------------------------------------
+        # Support internal service calls using Product
+        # --------------------------------------------------
 
-        if quantity <= 0:
+        product = item.get("product")
+
+        if product is not None:
+
+            product_id = product.pk
+
+        if not product_id:
+
             raise ValidationError(
-                f"Invalid quantity for '{product.name}'."
+                "Product is required."
             )
 
-        # Prevent returning more than sold
-        sold_qty = (
-            sale.items.filter(product=product)
-            .aggregate(total_quantity=Sum("quantity"))
-            .get("total_quantity")
+        # --------------------------------------------------
+        # Prevent duplicate product lines
+        # --------------------------------------------------
+
+        if product_id in processed_products:
+
+            raise ValidationError(
+                f"Product {product_id} appears more "
+                f"than once in the return."
+            )
+
+        processed_products.add(
+            product_id
+        )
+
+        # --------------------------------------------------
+        # LOCK PRODUCT
+        # --------------------------------------------------
+
+        try:
+
+            product = (
+                Product.objects
+                .select_for_update()
+                .get(pk=product_id)
+            )
+
+        except Product.DoesNotExist:
+
+            raise ValidationError(
+                f"Product {product_id} not found."
+            )
+
+        # --------------------------------------------------
+        # QUANTITY
+        # --------------------------------------------------
+
+        quantity = _to_decimal(
+            item.get("quantity", 0)
+        )
+
+        if quantity <= Decimal("0.00"):
+
+            raise ValidationError(
+                f"Return quantity for "
+                f"{product.name} must be greater than zero."
+            )
+
+        # ==================================================
+        # ORIGINAL SALE ITEM
+        # ==================================================
+
+        sale_item = (
+            sale.items
+            .filter(product=product)
+            .first()
+        )
+
+        if not sale_item:
+
+            raise ValidationError(
+                f"{product.name} was not included "
+                f"in sale {sale.invoice_no}."
+            )
+
+        # ==================================================
+        # ORIGINAL UNIT PRICE
+        # ==================================================
+
+        unit_price = _to_decimal(
+            sale_item.unit_price
+        )
+
+        # ==================================================
+        # SOLD QUANTITY
+        # ==================================================
+
+        sold_quantity = (
+            sale.items
+            .filter(product=product)
+            .aggregate(
+                total=Sum("quantity")
+            )["total"]
             or Decimal("0.00")
         )
 
-        returned_qty = (
-            SalesReturnItem.objects.filter(
+        # ==================================================
+        # PREVIOUSLY RETURNED
+        # ==================================================
+
+        returned_quantity = (
+            SalesReturnItem.objects
+            .filter(
                 sales_return__sale=sale,
+                sales_return__status=(
+                    SalesReturn.Status.COMPLETED
+                ),
                 product=product,
             )
-            .aggregate(total_quantity=Sum("quantity"))
-            .get("total_quantity")
+            .aggregate(
+                total=Sum("quantity")
+            )["total"]
             or Decimal("0.00")
         )
 
-        available_return_qty = sold_qty - returned_qty
+        # ==================================================
+        # AVAILABLE RETURN
+        # ==================================================
 
-        if quantity > available_return_qty:
+        available_quantity = (
+            sold_quantity
+            - returned_quantity
+        )
+
+        if quantity > available_quantity:
+
             raise ValidationError(
-                f"You can return only {available_return_qty} "
-                f"{product.name}. Already returned: {returned_qty}."
+                f"Cannot return {quantity} "
+                f"{product.name}. "
+                f"Only {available_quantity} "
+                f"is available for return."
             )
 
-        subtotal = quantity * unit_price
+        # ==================================================
+        # SUBTOTAL
+        # ==================================================
+
+        subtotal = (
+            quantity * unit_price
+        )
+
+        total_return += subtotal
+
+        # ==================================================
+        # CREATE ITEM
+        # ==================================================
 
         SalesReturnItem.objects.create(
             sales_return=sales_return,
@@ -195,14 +438,47 @@ def create_sales_return(
             subtotal=subtotal,
         )
 
-        total_return += subtotal
+        # ==================================================
+        # STOCK IN
+        # ==================================================
 
-        # Increase stock
         stock_in(
             product=product,
             quantity=quantity,
             reference=sales_return.return_no,
         )
+
+    # ======================================================
+    # RETURN TOTAL
+    # ======================================================
+
+    if total_return <= Decimal("0.00"):
+
+        raise ValidationError(
+            "Return amount must be greater than zero."
+        )
+
+    # ======================================================
+    # REFUND VALIDATION
+    # ======================================================
+
+    if refund_amount > total_return:
+
+        raise ValidationError(
+            "Refund amount cannot exceed "
+            "the total return amount."
+        )
+
+    if refund_amount > sale.paid_amount:
+
+        raise ValidationError(
+            "Refund amount cannot exceed "
+            "the amount already paid."
+        )
+
+    # ======================================================
+    # UPDATE RETURN HEADER
+    # ======================================================
 
     sales_return.total_amount = total_return
 
@@ -212,20 +488,29 @@ def create_sales_return(
         ]
     )
 
-    # Update original invoice
+    # ======================================================
+    # UPDATE ORIGINAL SALE
+    # ======================================================
+
     _update_sale_after_return(
         sale=sale,
         return_amount=total_return,
         refund_amount=refund_amount,
     )
 
-    # Customer Ledger
+    # ======================================================
+    # CUSTOMER LEDGER
+    # ======================================================
+
     create_customer_sales_return_entry(
         customer=sale.customer,
         sales_return=sales_return,
     )
 
-    # Refund Cash (if applicable)
+    # ======================================================
+    # CASHBOOK REFUND
+    # ======================================================
+
     if refund_amount > Decimal("0.00"):
 
         cash_out(
@@ -233,7 +518,10 @@ def create_sales_return(
             source_type="SALE_RETURN",
             date=sales_return.date,
             reference=sales_return.return_no,
-            description=f"Refund against {sales_return.return_no}",
+            description=(
+                f"Refund against "
+                f"{sales_return.return_no}"
+            ),
         )
 
     return sales_return

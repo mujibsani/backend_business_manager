@@ -10,11 +10,20 @@ app_name = "purchase_returns"
 
 
 urlpatterns = [
+
+    # ======================================================
+    # LIST + CREATE
+    # ======================================================
+
     path(
         "",
         PurchaseReturnListCreateView.as_view(),
         name="purchase-return-list-create",
     ),
+
+    # ======================================================
+    # DETAIL
+    # ======================================================
 
     path(
         "<int:pk>/",

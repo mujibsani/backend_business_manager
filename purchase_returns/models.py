@@ -72,7 +72,7 @@ class PurchaseReturn(TimeStampedModel):
 
     def clean(self):
 
-        if self.purchase:
+        if self.purchase_id and self.supplier_id:
 
             if self.supplier_id != self.purchase.supplier_id:
                 raise ValidationError(
@@ -158,7 +158,9 @@ class PurchaseReturnItem(TimeStampedModel):
 
     def save(self, *args, **kwargs):
 
-        self.subtotal = self.quantity * self.unit_price
+        self.subtotal = (
+            self.quantity * self.unit_price
+        )
 
         super().save(*args, **kwargs)
 

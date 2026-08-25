@@ -1,4 +1,7 @@
 from rest_framework import generics
+from rest_framework.permissions import IsAuthenticated
+
+from accounts.permissions import IsStaff
 
 from .models import PurchaseReturn
 from .serializers import (
@@ -15,15 +18,24 @@ class PurchaseReturnListCreateView(
     generics.ListCreateAPIView
 ):
     """
+    Purchase Return API.
+
     GET:
-        List all Purchase Returns.
+        List purchase returns.
 
     POST:
-        Create a new Purchase Return.
+        Create a purchase return.
 
-    Business/accounting logic is handled by:
-        purchase_returns.services.create_purchase_return()
+    Roles:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [
+        IsAuthenticated,
+        IsStaff,
+    ]
 
     queryset = (
         PurchaseReturn.objects
@@ -38,11 +50,11 @@ class PurchaseReturnListCreateView(
         .all()
     )
 
+    # ======================================================
+    # QUERYSET
+    # ======================================================
+
     def get_queryset(self):
-        """
-        Return Purchase Returns ordered by
-        newest date first.
-        """
 
         return (
             self.queryset
@@ -52,11 +64,11 @@ class PurchaseReturnListCreateView(
             )
         )
 
+    # ======================================================
+    # SERIALIZER
+    # ======================================================
+
     def get_serializer_class(self):
-        """
-        Use the write serializer for POST
-        and the read serializer for GET.
-        """
 
         if self.request.method == "POST":
             return PurchaseReturnCreateSerializer
@@ -65,16 +77,25 @@ class PurchaseReturnListCreateView(
 
 
 # ==========================================================
-# RETRIEVE PURCHASE RETURN
+# PURCHASE RETURN DETAIL
 # ==========================================================
 
 class PurchaseReturnDetailView(
     generics.RetrieveAPIView
 ):
     """
-    GET:
-        Retrieve a single Purchase Return.
+    Retrieve a single Purchase Return.
+
+    Roles:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [
+        IsAuthenticated,
+        IsStaff,
+    ]
 
     queryset = (
         PurchaseReturn.objects

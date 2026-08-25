@@ -4,7 +4,10 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
 
-from .models import PurchaseReturn, PurchaseReturnItem
+from .models import (
+    PurchaseReturn,
+    PurchaseReturnItem,
+)
 
 from products.models import Product
 from products.services import stock_out
@@ -21,14 +24,6 @@ from cashbook.services import cash_in
 # ==========================================================
 
 def generate_purchase_return_no():
-    """
-    Generate sequential purchase return numbers.
-
-    Examples:
-        PR-000001
-        PR-000002
-        PR-000003
-    """
 
     last_return = (
         PurchaseReturn.objects
@@ -54,12 +49,10 @@ def generate_purchase_return_no():
 # ==========================================================
 
 def _to_decimal(value):
-    """
-    Safely convert a value to Decimal.
-    """
 
     try:
         return Decimal(str(value))
+
     except (TypeError, ValueError):
         raise ValidationError(
             f"Invalid decimal value: {value}"
@@ -71,10 +64,6 @@ def _to_decimal(value):
 # ==========================================================
 
 def _validate_amount(amount):
-    """
-    Convert amount to Decimal and make sure
-    it is not negative.
-    """
 
     amount = _to_decimal(amount)
 
@@ -95,33 +84,14 @@ def _update_purchase_after_return(
     return_amount,
     refund_amount=Decimal("0.00"),
 ):
-    """
-    Update the original purchase after a return.
 
-    Example:
+    return_amount = _to_decimal(
+        return_amount
+    )
 
-        Original Purchase
-        -----------------
-        Total = 10,000
-        Paid  = 6,000
-        Due   = 4,000
-
-        Return = 2,000
-        Refund = 1,000
-
-        New Purchase
-        -------------
-        Total = 8,000
-        Paid  = 5,000
-        Due   = 3,000
-    """
-
-    return_amount = _to_decimal(return_amount)
-    refund_amount = _to_decimal(refund_amount)
-
-    # ------------------------------------------------------
-    # Safety validation
-    # ------------------------------------------------------
+    refund_amount = _to_decimal(
+        refund_amount
+    )
 
     if return_amount <= Decimal("0.00"):
         raise ValidationError(
@@ -138,7 +108,6 @@ def _update_purchase_after_return(
             "Refund amount cannot exceed return amount."
         )
 
-    # Cash refund cannot exceed what was actually paid.
     if refund_amount > purchase.paid_amount:
         raise ValidationError(
             "Supplier refund cannot exceed "
@@ -152,10 +121,13 @@ def _update_purchase_after_return(
     purchase.total_amount -= return_amount
 
     if purchase.total_amount < Decimal("0.00"):
-        purchase.total_amount = Decimal("0.00")
+        raise ValidationError(
+            "Return amount cannot exceed "
+            "the remaining purchase amount."
+        )
 
     # ------------------------------------------------------
-    # Reduce paid amount by actual cash refund
+    # Reduce paid amount by cash refund
     # ------------------------------------------------------
 
     if refund_amount > Decimal("0.00"):
@@ -178,7 +150,7 @@ def _update_purchase_after_return(
         purchase.due_amount = Decimal("0.00")
 
     # ------------------------------------------------------
-    # Update status
+    # Update purchase status
     # ------------------------------------------------------
 
     if purchase.due_amount == Decimal("0.00"):
@@ -221,24 +193,6 @@ def create_purchase_return(
     created_by=None,
     date=None,
 ):
-    """
-    Create a completed purchase return.
-
-    Responsibilities:
-
-    1. Validate purchase
-    2. Validate supplier
-    3. Lock purchase
-    4. Validate return items
-    5. Prevent over-return
-    6. Use original purchase price
-    7. Create PurchaseReturn
-    8. Create PurchaseReturnItems
-    9. Reduce stock
-    10. Update original Purchase
-    11. Create supplier ledger entry
-    12. Record supplier cash refund
-    """
 
     # ======================================================
     # BASIC VALIDATION
@@ -269,7 +223,7 @@ def create_purchase_return(
         )
 
     # ======================================================
-    # VALIDATE REFUND
+    # REFUND
     # ======================================================
 
     refund_amount = _validate_amount(
@@ -284,11 +238,21 @@ def create_purchase_return(
         purchase.__class__
         .objects
         .select_for_update()
+        .select_related("supplier")
         .get(pk=purchase.pk)
     )
 
     # ======================================================
-    # VALIDATE REFUND AGAINST PURCHASE
+    # ENSURE SUPPLIER STILL MATCHES
+    # ======================================================
+
+    if purchase.supplier_id != supplier.id:
+        raise ValidationError(
+            "Supplier does not match the purchase supplier."
+        )
+
+    # ======================================================
+    # REFUND LIMIT
     # ======================================================
 
     if refund_amount > purchase.paid_amount:
@@ -326,32 +290,16 @@ def create_purchase_return(
     total_return = Decimal("0.00")
 
     # ======================================================
-    # TRACK PRODUCTS IN THIS RETURN
+    # TRACK PRODUCTS
     # ======================================================
 
     processed_products = set()
 
     # ======================================================
-    # PROCESS RETURN ITEMS
+    # PROCESS ITEMS
     # ======================================================
 
     for item in items:
-
-        # --------------------------------------------------
-        # Accept either:
-        #
-        # {
-        #     "product": product,
-        #     "quantity": 2
-        # }
-        #
-        # OR:
-        #
-        # {
-        #     "product_id": product.id,
-        #     "quantity": 2
-        # }
-        # --------------------------------------------------
 
         product = item.get("product")
 
@@ -366,7 +314,7 @@ def create_purchase_return(
             )
 
         # --------------------------------------------------
-        # Prevent duplicate product lines
+        # Duplicate product
         # --------------------------------------------------
 
         if product_id in processed_products:
@@ -382,6 +330,7 @@ def create_purchase_return(
         # --------------------------------------------------
 
         try:
+
             product = (
                 Product.objects
                 .select_for_update()
@@ -389,6 +338,7 @@ def create_purchase_return(
             )
 
         except Product.DoesNotExist:
+
             raise ValidationError(
                 f"Product {product_id} not found."
             )
@@ -408,7 +358,7 @@ def create_purchase_return(
             )
 
         # ==================================================
-        # FIND ORIGINAL PURCHASE ITEM
+        # ORIGINAL PURCHASE ITEM
         # ==================================================
 
         purchase_item = (
@@ -418,13 +368,14 @@ def create_purchase_return(
         )
 
         if not purchase_item:
+
             raise ValidationError(
                 f"{product.name} was not included "
                 f"in purchase {purchase.invoice_no}."
             )
 
         # ==================================================
-        # USE ORIGINAL PURCHASE PRICE
+        # ORIGINAL PURCHASE PRICE
         # ==================================================
 
         unit_price = _to_decimal(
@@ -432,7 +383,7 @@ def create_purchase_return(
         )
 
         # ==================================================
-        # TOTAL PURCHASED QUANTITY
+        # PURCHASED QUANTITY
         # ==================================================
 
         purchased_quantity = (
@@ -471,6 +422,7 @@ def create_purchase_return(
         )
 
         if quantity > available_quantity:
+
             raise ValidationError(
                 f"Cannot return {quantity} "
                 f"{product.name}. "
@@ -479,10 +431,11 @@ def create_purchase_return(
             )
 
         # ==================================================
-        # CHECK CURRENT STOCK
+        # CURRENT STOCK
         # ==================================================
 
         if product.stock < quantity:
+
             raise ValidationError(
                 f"Not enough stock to return "
                 f"{quantity} {product.name}."
@@ -519,25 +472,28 @@ def create_purchase_return(
         )
 
     # ======================================================
-    # VALIDATE RETURN TOTAL
+    # RETURN TOTAL
     # ======================================================
 
     if total_return <= Decimal("0.00"):
+
         raise ValidationError(
             "Return amount must be greater than zero."
         )
 
     # ======================================================
-    # VALIDATE REFUND AGAINST RETURN
+    # REFUND LIMIT
     # ======================================================
 
     if refund_amount > total_return:
+
         raise ValidationError(
             "Supplier refund cannot exceed "
             "the total return amount."
         )
 
     if refund_amount > purchase.paid_amount:
+
         raise ValidationError(
             "Supplier refund cannot exceed "
             "the amount already paid for the purchase."
@@ -556,7 +512,7 @@ def create_purchase_return(
     )
 
     # ======================================================
-    # UPDATE ORIGINAL PURCHASE
+    # UPDATE PURCHASE
     # ======================================================
 
     _update_purchase_after_return(
@@ -575,7 +531,7 @@ def create_purchase_return(
     )
 
     # ======================================================
-    # CASHBOOK
+    # CASHBOOK REFUND
     # ======================================================
 
     if refund_amount > Decimal("0.00"):

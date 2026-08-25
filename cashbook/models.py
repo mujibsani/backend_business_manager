@@ -1,4 +1,5 @@
 from django.db import models
+
 from core.models import TimeStampedModel
 
 
@@ -12,23 +13,42 @@ class CashbookEntry(TimeStampedModel):
     SOURCE_TYPE = (
         ("SALE", "Sale"),
         ("PURCHASE", "Purchase"),
+        ("SALE_RETURN", "Sale Return"),
+        ("PURCHASE_RETURN", "Purchase Return"),
         ("EXPENSE", "Expense"),
         ("OTHER", "Other"),
     )
 
-    entry_type = models.CharField(max_length=10, choices=ENTRY_TYPE)
-    source_type = models.CharField(max_length=20, choices=SOURCE_TYPE, default="OTHER")
+    entry_type = models.CharField(
+        max_length=10,
+        choices=ENTRY_TYPE,
+    )
 
-    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    source_type = models.CharField(
+        max_length=20,
+        choices=SOURCE_TYPE,
+        default="OTHER",
+    )
+
+    amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+    )
 
     reference = models.CharField(
-        max_length=100, 
+        max_length=100,
         blank=True,
-        db_index=True
+        db_index=True,
     )
-    description = models.CharField(max_length=255, blank=True)
 
-    date = models.DateField(db_index=True)
+    description = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+
+    date = models.DateField(
+        db_index=True,
+    )
 
     def __str__(self):
         return f"{self.entry_type} - {self.amount}"

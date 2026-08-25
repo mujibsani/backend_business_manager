@@ -11,10 +11,6 @@ app_name = "ledger"
 
 urlpatterns = [
 
-    # ==========================================================
-    # Ledger Entries
-    # ==========================================================
-
     path(
         "",
         LedgerEntryListAPIView.as_view(),
@@ -27,24 +23,15 @@ urlpatterns = [
         name="ledger-detail",
     ),
 
-    # ==========================================================
-    # Customer Ledger Statement
-    # ==========================================================
-
     path(
         "customer/<int:customer_id>/",
         CustomerLedgerStatementAPIView.as_view(),
         name="customer-ledger",
     ),
 
-    # ==========================================================
-    # Supplier Ledger Statement
-    # ==========================================================
-
     path(
         "supplier/<int:supplier_id>/",
         SupplierLedgerStatementAPIView.as_view(),
         name="supplier-ledger",
     ),
-
 ]

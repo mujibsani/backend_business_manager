@@ -7,6 +7,8 @@ from rest_framework import status
 from customers.models import Customer
 from suppliers.models import Supplier
 
+from core.permissions import IsStaff
+
 from .models import LedgerEntry
 from .serializers import LedgerEntrySerializer
 from .services import (
@@ -22,18 +24,33 @@ from .services import (
 class LedgerEntryListAPIView(APIView):
     """
     List all ledger entries.
+
+    Accessible by:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [IsStaff]
 
     def get(self, request):
 
-        queryset = LedgerEntry.objects.all().order_by("-date", "-id")
+        queryset = (
+            LedgerEntry.objects
+            .select_related("customer", "supplier")
+            .all()
+            .order_by("-date", "-id")
+        )
 
         serializer = LedgerEntrySerializer(
             queryset,
-            many=True
+            many=True,
         )
 
-        return Response(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
 
 
 # ==========================================================
@@ -43,18 +60,31 @@ class LedgerEntryListAPIView(APIView):
 class LedgerEntryDetailAPIView(APIView):
     """
     Retrieve a single ledger entry.
+
+    Accessible by:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [IsStaff]
 
     def get(self, request, pk):
 
         entry = get_object_or_404(
-            LedgerEntry,
-            pk=pk
+            LedgerEntry.objects.select_related(
+                "customer",
+                "supplier",
+            ),
+            pk=pk,
         )
 
         serializer = LedgerEntrySerializer(entry)
 
-        return Response(serializer.data)
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK,
+        )
 
 
 # ==========================================================
@@ -63,18 +93,30 @@ class LedgerEntryDetailAPIView(APIView):
 
 class CustomerLedgerStatementAPIView(APIView):
     """
-    Customer Ledger Statement
+    Customer Ledger Statement.
+
+    Accessible by:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [IsStaff]
 
     def get(self, request, customer_id):
 
         customer = get_object_or_404(
             Customer,
-            pk=customer_id
+            pk=customer_id,
         )
 
-        from_date = request.query_params.get("from_date")
-        to_date = request.query_params.get("to_date")
+        from_date = request.query_params.get(
+            "from_date"
+        )
+
+        to_date = request.query_params.get(
+            "to_date"
+        )
 
         statement = get_customer_statement(
             customer=customer,
@@ -85,9 +127,15 @@ class CustomerLedgerStatementAPIView(APIView):
         return Response(
             {
                 "customer": customer.name,
-                "opening_balance": statement["opening_balance"],
-                "closing_balance": statement["closing_balance"],
-                "transactions": statement["transactions"],
+                "opening_balance": statement[
+                    "opening_balance"
+                ],
+                "closing_balance": statement[
+                    "closing_balance"
+                ],
+                "transactions": statement[
+                    "transactions"
+                ],
             },
             status=status.HTTP_200_OK,
         )
@@ -99,18 +147,30 @@ class CustomerLedgerStatementAPIView(APIView):
 
 class SupplierLedgerStatementAPIView(APIView):
     """
-    Supplier Ledger Statement
+    Supplier Ledger Statement.
+
+    Accessible by:
+        ADMIN
+        MANAGER
+        STAFF
     """
+
+    permission_classes = [IsStaff]
 
     def get(self, request, supplier_id):
 
         supplier = get_object_or_404(
             Supplier,
-            pk=supplier_id
+            pk=supplier_id,
         )
 
-        from_date = request.query_params.get("from_date")
-        to_date = request.query_params.get("to_date")
+        from_date = request.query_params.get(
+            "from_date"
+        )
+
+        to_date = request.query_params.get(
+            "to_date"
+        )
 
         statement = get_supplier_statement(
             supplier=supplier,
@@ -121,9 +181,15 @@ class SupplierLedgerStatementAPIView(APIView):
         return Response(
             {
                 "supplier": supplier.name,
-                "opening_balance": statement["opening_balance"],
-                "closing_balance": statement["closing_balance"],
-                "transactions": statement["transactions"],
+                "opening_balance": statement[
+                    "opening_balance"
+                ],
+                "closing_balance": statement[
+                    "closing_balance"
+                ],
+                "transactions": statement[
+                    "transactions"
+                ],
             },
             status=status.HTTP_200_OK,
         )

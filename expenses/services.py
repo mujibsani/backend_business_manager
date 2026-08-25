@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from django.core.exceptions import ValidationError
 
@@ -18,18 +20,24 @@ def create_expense(
     """
     Create a business expense.
 
-    Accounting Flow
+    Accounting flow:
 
         Expense
             ↓
-        Cashbook (OUT)
-
-    Future:
-        Journal Entry
+        Cashbook OUT
     """
 
-    if amount <= 0:
-        raise ValidationError("Expense amount must be greater than zero.")
+    try:
+        amount = Decimal(str(amount))
+    except (TypeError, ValueError):
+        raise ValidationError(
+            "Invalid expense amount."
+        )
+
+    if amount <= Decimal("0.00"):
+        raise ValidationError(
+            "Expense amount must be greater than zero."
+        )
 
     expense = Expense.objects.create(
         category=category,
@@ -39,14 +47,17 @@ def create_expense(
         created_by=created_by,
     )
 
-    process_expense_accounting(expense)
+    process_expense_accounting(
+        expense
+    )
 
     return expense
 
 
 def process_expense_accounting(expense):
     """
-    Create accounting entries after an expense is created.
+    Create accounting entries after
+    an expense is created.
     """
 
     cash_out(
@@ -54,5 +65,8 @@ def process_expense_accounting(expense):
         source_type="EXPENSE",
         date=expense.date,
         reference=f"EXP-{expense.id}",
-        description=expense.description or expense.category.name,
+        description=(
+            expense.description
+            or expense.category.name
+        ),
     )

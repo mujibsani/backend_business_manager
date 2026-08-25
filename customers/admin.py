@@ -1,24 +1,41 @@
-from django.contrib import admin
-from .models import Customer
+from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
-from django.forms import ModelForm
 
 from .models import Customer
 
 
-class CustomerForm(ModelForm):
+class CustomerForm(forms.ModelForm):
+
+    class Meta:
+        model = Customer
+        fields = "__all__"
 
     def clean_phone(self):
+
         phone = self.cleaned_data["phone"]
 
-        if Customer.objects.filter(phone=phone).exists():
-            raise ValidationError("This phone number already exists!")
+        queryset = Customer.objects.filter(
+            phone=phone
+        )
+
+        if self.instance and self.instance.pk:
+            queryset = queryset.exclude(
+                pk=self.instance.pk
+            )
+
+        if queryset.exists():
+            raise ValidationError(
+                "This phone number already exists!"
+            )
 
         return phone
 
+
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
+
+    form = CustomerForm
 
     list_display = (
         "name",
@@ -43,7 +60,9 @@ class CustomerAdmin(admin.ModelAdmin):
     search_fields = (
         "name",
         "phone",
+        "email",
         "area",
+        "address",
     )
 
     ordering = (

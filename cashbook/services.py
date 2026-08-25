@@ -1,9 +1,27 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError
 from django.db.models import Sum
 
 from .models import CashbookEntry
 
+
+# ==========================================================
+# DECIMAL HELPER
+# ==========================================================
+
+def _to_decimal(value):
+    try:
+        return Decimal(str(value))
+    except (TypeError, ValueError, InvalidOperation):
+        raise ValidationError(
+            "Invalid cashbook amount."
+        )
+
+
+# ==========================================================
+# INTERNAL CREATE
+# ==========================================================
 
 def _create_cashbook_entry(
     *,
@@ -14,10 +32,30 @@ def _create_cashbook_entry(
     reference="",
     description="",
 ):
-    """
-    Internal helper.
-    All cashbook entries should be created through this function.
-    """
+
+    amount = _to_decimal(amount)
+
+    if amount <= Decimal("0.00"):
+
+        raise ValidationError(
+            "Cashbook amount must be greater than zero."
+        )
+
+    if entry_type not in dict(
+        CashbookEntry.ENTRY_TYPE
+    ):
+
+        raise ValidationError(
+            "Invalid cashbook entry type."
+        )
+
+    if source_type not in dict(
+        CashbookEntry.SOURCE_TYPE
+    ):
+
+        raise ValidationError(
+            "Invalid cashbook source type."
+        )
 
     return CashbookEntry.objects.create(
         entry_type=entry_type,
@@ -40,13 +78,6 @@ def cash_in(
     reference="",
     description="",
 ):
-    """
-    Record incoming cash.
-    Example:
-        - Customer Payment
-        - Cash Sale
-        - Other Income
-    """
 
     return _create_cashbook_entry(
         entry_type="IN",
@@ -69,13 +100,6 @@ def cash_out(
     reference="",
     description="",
 ):
-    """
-    Record outgoing cash.
-    Example:
-        - Supplier Payment
-        - Expense
-        - Other Expense
-    """
 
     return _create_cashbook_entry(
         entry_type="OUT",
@@ -88,24 +112,24 @@ def cash_out(
 
 
 # ==========================================================
-# SUMMARY
+# CASHBOOK SUMMARY
 # ==========================================================
 
 def get_cashbook_summary():
 
     total_in = (
-        CashbookEntry.objects.filter(
-            entry_type="IN"
-        ).aggregate(
+        CashbookEntry.objects
+        .filter(entry_type="IN")
+        .aggregate(
             total=Sum("amount")
         )["total"]
         or Decimal("0.00")
     )
 
     total_out = (
-        CashbookEntry.objects.filter(
-            entry_type="OUT"
-        ).aggregate(
+        CashbookEntry.objects
+        .filter(entry_type="OUT")
+        .aggregate(
             total=Sum("amount")
         )["total"]
         or Decimal("0.00")

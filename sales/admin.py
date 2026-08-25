@@ -28,5 +28,3 @@ class SaleAdmin(admin.ModelAdmin):
     inlines = [SaleItemInline]
 
     readonly_fields = ("total_amount", "due_amount", "status")
-
-

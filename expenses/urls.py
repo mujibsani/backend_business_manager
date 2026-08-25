@@ -1,44 +1,24 @@
-from django.urls import path
+from rest_framework.routers import DefaultRouter
 
 from .views import (
-    ExpenseCategoryListCreateAPIView,
-    ExpenseCategoryDetailAPIView,
-    ExpenseListCreateAPIView,
-    ExpenseDetailAPIView,
+    ExpenseCategoryViewSet,
+    ExpenseViewSet,
 )
 
-urlpatterns = [
 
-    # ==========================================
-    # Expense Categories
-    # ==========================================
+router = DefaultRouter()
 
-    path(
-        "categories/",
-        ExpenseCategoryListCreateAPIView.as_view(),
-        name="expense-category-list",
-    ),
+router.register(
+    "categories",
+    ExpenseCategoryViewSet,
+    basename="expense-category",
+)
 
-    path(
-        "categories/<int:pk>/",
-        ExpenseCategoryDetailAPIView.as_view(),
-        name="expense-category-detail",
-    ),
+router.register(
+    "",
+    ExpenseViewSet,
+    basename="expense",
+)
 
-    # ==========================================
-    # Expenses
-    # ==========================================
 
-    path(
-        "",
-        ExpenseListCreateAPIView.as_view(),
-        name="expense-list",
-    ),
-
-    path(
-        "<int:pk>/",
-        ExpenseDetailAPIView.as_view(),
-        name="expense-detail",
-    ),
-
-]
+urlpatterns = router.urls
