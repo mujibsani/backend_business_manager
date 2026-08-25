@@ -9,6 +9,12 @@ urlpatterns = [
         "admin/",
         admin.site.urls,
     ),
+    
+    # Accounts
+    path(
+        "api/accounts/",
+        include("accounts.urls"),
+    ),
 
     # Reports
     path(

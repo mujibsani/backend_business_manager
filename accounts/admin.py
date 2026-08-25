@@ -7,36 +7,23 @@ from .models import User
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     """
-    Admin configuration for Business Manager users.
+    Custom Business Manager User admin.
+
+    Roles:
+        ADMIN
+        MANAGER
+        STAFF
     """
-
-    fieldsets = BaseUserAdmin.fieldsets + (
-        (
-            "Business Role",
-            {
-                "fields": ("role",),
-            },
-        ),
-    )
-
-    add_fieldsets = BaseUserAdmin.add_fieldsets + (
-        (
-            "Business Role",
-            {
-                "fields": ("role",),
-            },
-        ),
-    )
 
     list_display = (
         "username",
+        "email",
         "first_name",
         "last_name",
-        "email",
         "role",
         "is_active",
         "is_staff",
-        "is_superuser",
+        "date_joined",
     )
 
     list_filter = (
@@ -48,9 +35,33 @@ class UserAdmin(BaseUserAdmin):
 
     search_fields = (
         "username",
+        "email",
         "first_name",
         "last_name",
-        "email",
     )
 
-    ordering = ("username",)
+    ordering = (
+        "-date_joined",
+    )
+
+    fieldsets = BaseUserAdmin.fieldsets + (
+        (
+            "Business Manager Role",
+            {
+                "fields": (
+                    "role",
+                ),
+            },
+        ),
+    )
+
+    add_fieldsets = BaseUserAdmin.add_fieldsets + (
+        (
+            "Business Manager Role",
+            {
+                "fields": (
+                    "role",
+                ),
+            },
+        ),
+    )

@@ -1,20 +1,26 @@
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
+from .models import User
 
-User = get_user_model()
 
+# ==========================================================
+# USER SERIALIZER
+# ==========================================================
 
 class UserSerializer(serializers.ModelSerializer):
     """
     General user representation.
 
-    Used for displaying users.
+    Used when returning user information.
+    Password is never exposed.
     """
 
     class Meta:
         model = User
-        fields = (
+
+        fields = [
             "id",
             "username",
             "first_name",
@@ -23,140 +29,364 @@ class UserSerializer(serializers.ModelSerializer):
             "role",
             "is_active",
             "date_joined",
-        )
+        ]
 
-        read_only_fields = (
+        read_only_fields = [
             "id",
             "date_joined",
-        )
+        ]
 
+
+# ==========================================================
+# CREATE USER
+# ==========================================================
 
 class UserCreateSerializer(serializers.ModelSerializer):
     """
-    Create a new Business Manager user.
+    Admin creates a new application user.
 
-    Password is write-only and is properly hashed
-    through Django's set_password().
+    Rules:
+
+    ADMIN:
+        Can create ADMIN, MANAGER and STAFF.
+
+    MANAGER:
+        Can create MANAGER and STAFF.
+
+    STAFF:
+        Cannot create users.
+
+    Password is write-only.
     """
 
     password = serializers.CharField(
         write_only=True,
-        min_length=8,
+        required=True,
+        validators=[validate_password],
+        style={"input_type": "password"},
+    )
+
+    password_confirm = serializers.CharField(
+        write_only=True,
+        required=True,
         style={"input_type": "password"},
     )
 
     class Meta:
         model = User
-        fields = (
+
+        fields = [
             "username",
             "first_name",
             "last_name",
             "email",
-            "password",
             "role",
+            "password",
+            "password_confirm",
+            "is_active",
+        ]
+
+        extra_kwargs = {
+            "is_active": {
+                "required": False,
+            },
+        }
+
+    def validate(self, attrs):
+        password = attrs.get("password")
+        password_confirm = attrs.pop("password_confirm", None)
+
+        if password != password_confirm:
+            raise serializers.ValidationError(
+                {
+                    "password_confirm": (
+                        "Passwords do not match."
+                    )
+                }
+            )
+
+        request = self.context.get("request")
+
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError(
+                "Authenticated user is required."
+            )
+
+        current_user = request.user
+        requested_role = attrs.get(
+            "role",
+            User.Role.STAFF,
         )
 
-    def validate_username(self, value):
-        value = value.strip()
+        # --------------------------------------------------
+        # STAFF CANNOT CREATE USERS
+        # --------------------------------------------------
 
-        if not value:
+        if current_user.role == User.Role.STAFF:
             raise serializers.ValidationError(
-                "Username is required."
+                "Staff users cannot create users."
             )
 
-        if User.objects.filter(
-            username__iexact=value
-        ).exists():
+        # --------------------------------------------------
+        # MANAGER CANNOT CREATE ADMIN
+        # --------------------------------------------------
+
+        if (
+            current_user.role == User.Role.MANAGER
+            and requested_role == User.Role.ADMIN
+        ):
             raise serializers.ValidationError(
-                "A user with this username already exists."
+                "Manager cannot create an Admin user."
             )
 
-        return value
-
-    def validate_role(self, value):
-        if value not in User.Role.values:
-            raise serializers.ValidationError(
-                "Invalid user role."
-            )
-
-        return value
+        return attrs
 
     def create(self, validated_data):
         password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.set_password(password)
-        user.save()
+        user = User.objects.create_user(
+            password=password,
+            **validated_data,
+        )
 
         return user
 
+
+# ==========================================================
+# UPDATE USER
+# ==========================================================
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Update an existing user.
 
-    Password is intentionally excluded.
-    Role changes will be handled separately.
+    Password is intentionally not handled here.
+
+    Password changes should use a dedicated password
+    endpoint/serializer.
     """
 
     class Meta:
         model = User
-        fields = (
+
+        fields = [
             "first_name",
             "last_name",
             "email",
-            "is_active",
-        )
-
-
-class UserRoleUpdateSerializer(serializers.ModelSerializer):
-    """
-    Change a user's Business Manager role.
-    """
-
-    class Meta:
-        model = User
-        fields = (
             "role",
-        )
+            "is_active",
+        ]
 
-    def validate_role(self, value):
-        if value not in User.Role.values:
+    def validate(self, attrs):
+        request = self.context.get("request")
+
+        if not request or not request.user.is_authenticated:
             raise serializers.ValidationError(
-                "Invalid user role."
+                "Authenticated user is required."
             )
 
-        return value
+        current_user = request.user
+        target_user = self.instance
 
+        requested_role = attrs.get(
+            "role",
+            target_user.role,
+        )
+
+        requested_active = attrs.get(
+            "is_active",
+            target_user.is_active,
+        )
+
+        # --------------------------------------------------
+        # USER CANNOT MODIFY THEIR OWN ROLE
+        # --------------------------------------------------
+
+        if (
+            target_user.pk == current_user.pk
+            and "role" in attrs
+            and requested_role != current_user.role
+        ):
+            raise serializers.ValidationError(
+                {
+                    "role": (
+                        "You cannot change your own role."
+                    )
+                }
+            )
+
+        # --------------------------------------------------
+        # USER CANNOT DEACTIVATE THEMSELVES
+        # --------------------------------------------------
+
+        if (
+            target_user.pk == current_user.pk
+            and "is_active" in attrs
+            and requested_active is False
+        ):
+            raise serializers.ValidationError(
+                {
+                    "is_active": (
+                        "You cannot deactivate yourself."
+                    )
+                }
+            )
+
+        # --------------------------------------------------
+        # STAFF CANNOT UPDATE USERS
+        # --------------------------------------------------
+
+        if current_user.role == User.Role.STAFF:
+            raise serializers.ValidationError(
+                "Staff users cannot update users."
+            )
+
+        # --------------------------------------------------
+        # MANAGER CANNOT CREATE/PROMOTE TO ADMIN
+        # --------------------------------------------------
+
+        if (
+            current_user.role == User.Role.MANAGER
+            and requested_role == User.Role.ADMIN
+        ):
+            raise serializers.ValidationError(
+                "Manager cannot assign the Admin role."
+            )
+
+        # --------------------------------------------------
+        # MANAGER CANNOT MODIFY ADMIN
+        # --------------------------------------------------
+
+        if (
+            current_user.role == User.Role.MANAGER
+            and target_user.role == User.Role.ADMIN
+        ):
+            raise serializers.ValidationError(
+                "Manager cannot modify an Admin user."
+            )
+
+        return attrs
+
+
+# ==========================================================
+# PASSWORD CHANGE
+# ==========================================================
 
 class ChangePasswordSerializer(serializers.Serializer):
     """
-    Change a user's password.
+    Change password for the currently authenticated user.
     """
 
     old_password = serializers.CharField(
         write_only=True,
+        required=True,
         style={"input_type": "password"},
     )
 
     new_password = serializers.CharField(
         write_only=True,
-        min_length=8,
+        required=True,
+        validators=[validate_password],
         style={"input_type": "password"},
     )
 
-    confirm_password = serializers.CharField(
+    new_password_confirm = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={"input_type": "password"},
+    )
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+
+        # --------------------------------------------------
+        # CHECK OLD PASSWORD
+        # --------------------------------------------------
+
+        if not user.check_password(
+            attrs["old_password"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "old_password": (
+                        "Current password is incorrect."
+                    )
+                }
+            )
+
+        # --------------------------------------------------
+        # CHECK NEW PASSWORD MATCH
+        # --------------------------------------------------
+
+        if (
+            attrs["new_password"]
+            != attrs["new_password_confirm"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "new_password_confirm": (
+                        "Passwords do not match."
+                    )
+                }
+            )
+
+        # --------------------------------------------------
+        # NEW PASSWORD CANNOT BE SAME
+        # --------------------------------------------------
+
+        if user.check_password(
+            attrs["new_password"]
+        ):
+            raise serializers.ValidationError(
+                {
+                    "new_password": (
+                        "New password must be different "
+                        "from your current password."
+                    )
+                }
+            )
+
+        return attrs
+
+
+# ==========================================================
+# LOGIN
+# ==========================================================
+
+class LoginSerializer(serializers.Serializer):
+    """
+    Username/password authentication serializer.
+    """
+
+    username = serializers.CharField(
+        required=True
+    )
+
+    password = serializers.CharField(
+        required=True,
         write_only=True,
         style={"input_type": "password"},
     )
 
     def validate(self, attrs):
-        if attrs["new_password"] != attrs["confirm_password"]:
+        username = attrs.get("username")
+        password = attrs.get("password")
+
+        user = authenticate(
+            username=username,
+            password=password,
+        )
+
+        if not user:
             raise serializers.ValidationError(
-                {
-                    "confirm_password":
-                        "Passwords do not match."
-                }
+                "Invalid username or password."
             )
+
+        if not user.is_active:
+            raise serializers.ValidationError(
+                "This user account is inactive."
+            )
+
+        attrs["user"] = user
 
         return attrs
